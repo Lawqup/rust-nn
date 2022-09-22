@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, Index, Mul};
+use std::ops::{Add, AddAssign, Index, IndexMut, Mul};
 
 #[derive(Debug, PartialEq)]
 pub struct Matrix2<T> {
@@ -16,6 +16,8 @@ pub struct Matrix1<T> {
 pub enum MatrixError {
     /// Indicates some dimension is incorrect in a Matrix operation.
     DimensionErr,
+    /// Indicates a matrix made from a vec has an unsuitable shape.
+    InitErr,
 }
 
 pub trait Dot<I> {
@@ -40,7 +42,32 @@ where
             data.push(self[ri].dot(rhs).unwrap());
         }
 
-        Ok(Matrix1::from_vec(&mut data))
+        Ok(Matrix1::from_vec(data))
+    }
+}
+
+impl<'a, T> Dot<&Matrix2<T>> for &'a Matrix2<T>
+where
+    T: Mul<Output = T> + Default + AddAssign + Copy,
+{
+    type Output = Matrix2<T>;
+    fn dot(self, rhs: &Matrix2<T>) -> Result<Self::Output, MatrixError> {
+        // columns of LHS == rows of RHS
+        if self.dim.1 != rhs.dim.0 {
+            return Err(MatrixError::DimensionErr);
+        }
+
+        let mut data = Vec::new();
+
+        for ci in 0..rhs.dim.1 {
+            let mut col = Vec::new();
+            for ri in 0..rhs.dim.0 {
+                col.push(rhs[ri][ci]);
+            }
+            data.push(self.dot(&Matrix1::from_vec(col)).unwrap().to_vec());
+        }
+
+        Ok(Matrix2::from_vec(data).unwrap().transpose())
     }
 }
 
@@ -79,11 +106,11 @@ where
             res.push(l + r);
         }
 
-        Ok(Matrix1::from_vec(&mut res))
+        Ok(Matrix1::from_vec(res))
     }
 }
 
-impl<T> Matrix2<T> {
+impl<T: Default> Matrix2<T> {
     pub fn from_array<const R: usize, const C: usize>(arr: [[T; C]; R]) -> Self {
         let mut data = Vec::new();
 
@@ -92,6 +119,47 @@ impl<T> Matrix2<T> {
         }
 
         Self { data, dim: (R, C) }
+    }
+
+    pub fn rows(&self) -> usize {
+        self.dim.0
+    }
+
+    pub fn from_vec(vec: Vec<Vec<T>>) -> Result<Self, MatrixError> {
+        let mut data = Vec::new();
+
+        let mut cols = None;
+        let rows = vec.len();
+
+        for row in vec {
+            if cols.is_some() && cols.unwrap() != row.len() {
+                return Err(MatrixError::InitErr);
+            }
+
+            cols = Some(row.len());
+            let col = Matrix1::from_vec(row);
+
+            data.push(col);
+        }
+
+        Ok(Self {
+            data,
+            dim: (rows, cols.unwrap_or(0)),
+        })
+    }
+
+    pub fn transpose(mut self) -> Self {
+        let mut transposed = (0..self.dim.1)
+            .map(|_| (0..self.dim.0).map(|_| T::default()).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+
+        for ri in 0..self.dim.0 {
+            for ci in 0..self.dim.1 {
+                transposed[ci][ri] = std::mem::take(&mut self[ri][ci]);
+            }
+        }
+
+        Self::from_vec(transposed).unwrap()
     }
 }
 
@@ -102,10 +170,22 @@ impl<T> Index<usize> for Matrix2<T> {
     }
 }
 
+impl<T> IndexMut<usize> for Matrix2<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.data[index]
+    }
+}
+
 impl<T> Index<usize> for Matrix1<T> {
     type Output = T;
     fn index(&self, index: usize) -> &Self::Output {
         &self.data[index]
+    }
+}
+
+impl<T> IndexMut<usize> for Matrix1<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.data[index]
     }
 }
 
@@ -122,12 +202,16 @@ impl<T> Matrix1<T> {
 
     /// Initializes matrix from a vector with the
     /// row size dimension of the vector's len.
-    pub fn from_vec(vec: &mut Vec<T>) -> Self {
+    pub fn from_vec(mut vec: Vec<T>) -> Self {
         let dim = vec.len();
         Self {
-            data: std::mem::take(vec),
+            data: std::mem::take(&mut vec),
             dim,
         }
+    }
+
+    pub fn to_vec(self) -> Vec<T> {
+        self.data
     }
 
     /// Returs the rows of this 1d Matrix
@@ -167,7 +251,7 @@ mod tests {
 
     #[test]
     fn access_matrix1_from_vec() {
-        let matrix = Matrix1::from_vec(&mut vec![3, 4, 7, 9]);
+        let matrix = Matrix1::from_vec(vec![3, 4, 7, 9]);
         assert_eq!(matrix[0], 3);
         assert_eq!(matrix[1], 4);
         assert_eq!(matrix[2], 7);
@@ -250,5 +334,89 @@ mod tests {
         let vec2 = Matrix1::from_array([1.0, 2.0, 4.0]);
         let vec3 = &vec1 + &vec2;
         assert_eq!(vec3, Err(MatrixError::DimensionErr));
+    }
+
+    #[test]
+    fn matrix2_from_vec() {
+        let vec = vec![vec![1, 2, 3], vec![4, 5, 6]];
+        let matrix = Matrix2::from_vec(vec).unwrap();
+
+        assert_eq!(matrix[0][1], 2);
+        assert_eq!(matrix[1][2], 6);
+        assert_eq!(matrix[0][0], 1);
+        assert_eq!(matrix[1][1], 5);
+    }
+
+    #[test]
+    fn matrix2_from_vec_err() {
+        let vec = vec![vec![1, 2, 3], vec![4, 5, 9], vec![1, 2]];
+        let matrix = Matrix2::from_vec(vec);
+
+        assert_eq!(matrix, Err(MatrixError::InitErr));
+
+        let vec = vec![vec![1, 2], vec![4, 5, 9], vec![1, 2, 2]];
+        let matrix = Matrix2::from_vec(vec);
+
+        assert_eq!(matrix, Err(MatrixError::InitErr));
+    }
+
+    #[test]
+    fn matrix1_to_vec() {
+        let vec = vec![5, 6, 5, 6, 1];
+        let matrix = Matrix1::from_vec(vec.clone());
+
+        assert_eq!(matrix.to_vec(), vec);
+    }
+
+    #[test]
+    fn matrix2_transpose() {
+        let matrix = Matrix2::from_array([[1, 2, 3], [4, 5, 6]]).transpose();
+
+        assert_eq!(
+            matrix
+                .data
+                .into_iter()
+                .map(|m| m.to_vec())
+                .collect::<Vec<_>>(),
+            [[1, 4], [2, 5], [3, 6]]
+        );
+        assert_eq!(matrix.dim, (3, 2));
+    }
+
+    #[test]
+    fn square_matrix_multiplication() {
+        let m1 = Matrix2::from_array([[1, 2], [3, 4]]);
+        let m2 = Matrix2::from_array([[3, 2], [1, 3]]);
+
+        let m3 = m1.dot(&m2).unwrap();
+
+        assert_eq!(
+            m3.data.into_iter().map(|m| m.to_vec()).collect::<Vec<_>>(),
+            [[5, 8], [13, 18]]
+        );
+
+        assert_eq!(m3.dim, (2, 2));
+    }
+
+    #[test]
+    fn non_square_matrix_multiplication() {
+        let m1 = Matrix2::from_array([[1, 2], [3, 4], [5, 6]]);
+        let m2 = Matrix2::from_array([[1, 2], [3, 4]]);
+
+        let m3 = m1.dot(&m2).unwrap();
+        assert_eq!(
+            m3.data.into_iter().map(|m| m.to_vec()).collect::<Vec<_>>(),
+            [[7, 10], [15, 22], [23, 34]]
+        );
+        assert_eq!(m3.dim, (3, 2));
+    }
+
+    #[test]
+    fn matrix_multiplication_error() {
+        let m1 = Matrix2::from_array([[1, 2], [3, 4], [5, 6]]).transpose();
+        let m2 = Matrix2::from_array([[1, 2], [3, 4]]);
+
+        let m3 = m1.dot(&m2);
+        assert_eq!(m3, Err(MatrixError::DimensionErr));
     }
 }

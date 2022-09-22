@@ -18,10 +18,18 @@ impl NeuralNet {
 
 #[cfg(test)]
 mod tests {
+    use crate::matrix::Dot;
+
     use super::*;
 
     #[test]
     fn default_values() {
         let net = NeuralNet::new();
+        let input = Matrix1::from_array([1.0, 2.0, 4.0, 5.0]);
+        let out = &net.weights.dot(&input).unwrap() + &net.biases;
+
+        for elem in &out.unwrap() {
+            assert_eq!(elem, &13.0);
+        }
     }
 }
