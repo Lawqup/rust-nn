@@ -19,4 +19,9 @@ impl NeuralNet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_values() {
+        let net = NeuralNet::new();
+    }
 }

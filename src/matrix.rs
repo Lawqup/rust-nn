@@ -1,4 +1,4 @@
-use std::ops::{AddAssign, Index, Mul};
+use std::ops::{Add, AddAssign, Index, Mul};
 
 #[derive(Debug, PartialEq)]
 pub struct Matrix2<T> {
@@ -20,15 +20,15 @@ pub enum MatrixError {
 
 pub trait Dot<I> {
     type Output;
-    fn dot(&self, rhs: I) -> Result<Self::Output, MatrixError>;
+    fn dot(self, rhs: I) -> Result<Self::Output, MatrixError>;
 }
 
-impl<T> Dot<&Matrix1<T>> for Matrix2<T>
+impl<'a, T> Dot<&Matrix1<T>> for &'a Matrix2<T>
 where
     T: Mul<Output = T> + Default + AddAssign + Copy,
 {
     type Output = Matrix1<T>;
-    fn dot(&self, rhs: &Matrix1<T>) -> Result<Self::Output, MatrixError> {
+    fn dot(self, rhs: &Matrix1<T>) -> Result<Self::Output, MatrixError> {
         // columns of LHS == rows of RHS
         if self.dim.1 != rhs.rows() {
             return Err(MatrixError::DimensionErr);
@@ -44,12 +44,12 @@ where
     }
 }
 
-impl<T> Dot<&Matrix1<T>> for Matrix1<T>
+impl<'a, T> Dot<&Matrix1<T>> for &'a Matrix1<T>
 where
     T: Mul<Output = T> + Default + AddAssign + Copy,
 {
     type Output = T;
-    fn dot(&self, rhs: &Matrix1<T>) -> Result<Self::Output, MatrixError> {
+    fn dot(self, rhs: &Matrix1<T>) -> Result<Self::Output, MatrixError> {
         // columns of LHS == rows of RHS
         if self.dim != rhs.rows() {
             return Err(MatrixError::DimensionErr);
@@ -61,6 +61,25 @@ where
         }
 
         Ok(sum)
+    }
+}
+
+impl<'a, T> Add for &'a Matrix1<T>
+where
+    &'a T: Add<Output = T>,
+{
+    type Output = Result<Matrix1<T>, MatrixError>;
+    fn add(self, rhs: Self) -> Self::Output {
+        if self.dim != rhs.dim {
+            return Err(MatrixError::DimensionErr);
+        }
+
+        let mut res = Vec::new();
+        for (l, r) in self.into_iter().zip(rhs) {
+            res.push(l + r);
+        }
+
+        Ok(Matrix1::from_vec(&mut res))
     }
 }
 
@@ -117,6 +136,22 @@ impl<T> Matrix1<T> {
     }
 }
 
+impl<'a, T> IntoIterator for &'a Matrix2<T> {
+    type Item = &'a Matrix1<T>;
+    type IntoIter = std::slice::Iter<'a, Matrix1<T>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Matrix1<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn access_matrix2_from_vec() {
+    fn access_matrix2_from_array() {
         let matrix = Matrix2::from_array([[1, 2, 3], [4, 5, 6]]);
         assert_eq!(matrix[0][1], 2);
         assert_eq!(matrix[1][2], 6);
@@ -174,5 +209,46 @@ mod tests {
         let matrix = Matrix2::from_array([[1, 2], [2, 2], [4, 8]]);
         let vec = Matrix1::from_array([1]);
         assert_eq!(matrix.dot(&vec), Err(MatrixError::DimensionErr));
+    }
+
+    #[test]
+    fn matrix1_into_iter() {
+        let data = [3.0, 4.5, 1.2, 2.0];
+        let matrix = Matrix1::from_array(data);
+
+        for (e, data) in matrix.into_iter().zip(data) {
+            assert_eq!(e, &data);
+        }
+
+        // test if moved
+        assert_eq!(matrix.dim, 4);
+    }
+
+    #[test]
+    fn matrix2_into_iter() {
+        let data = [[1, 2], [2, 2], [4, 8]];
+        let matrix = Matrix2::from_array(data);
+        for (row, data) in matrix.into_iter().zip(data) {
+            assert_eq!(row.data, data);
+        }
+
+        // test if moved
+        assert_eq!(matrix.dim, (3, 2));
+    }
+
+    #[test]
+    fn vector_addition() {
+        let vec1 = Matrix1::from_array([3.0, 4.5, 1.2, 2.0]);
+        let vec2 = Matrix1::from_array([1.0, 2.0, 4.0, 1.0]);
+        let vec3 = &vec1 + &vec2;
+        assert_eq!(vec3.unwrap().data, [4.0, 6.5, 5.2, 3.0]);
+    }
+
+    #[test]
+    fn vector_addition_err() {
+        let vec1 = Matrix1::from_array([3.0, 4.5, 1.2, 2.0]);
+        let vec2 = Matrix1::from_array([1.0, 2.0, 4.0]);
+        let vec3 = &vec1 + &vec2;
+        assert_eq!(vec3, Err(MatrixError::DimensionErr));
     }
 }
