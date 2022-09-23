@@ -25,6 +25,10 @@ pub trait Dot<I> {
     fn dot(self, rhs: I) -> Result<Self::Output, MatrixError>;
 }
 
+pub trait Transpose {
+    fn transpose(self) -> Self;
+}
+
 impl<'a, T> Dot<&Matrix1<T>> for &'a Matrix2<T>
 where
     T: Mul<Output = T> + Default + AddAssign + Copy,
@@ -91,6 +95,7 @@ where
     }
 }
 
+/// Adds two Matrix1s element-wise.
 impl<'a, T> Add for &'a Matrix1<T>
 where
     &'a T: Add<Output = T>,
@@ -110,7 +115,48 @@ where
     }
 }
 
-impl<T: Default> Matrix2<T> {
+/// Adds two Matrix2s element-wise.
+impl<'a, T> Add for &'a Matrix2<T>
+where
+    &'a T: Add<Output = T>,
+{
+    type Output = Result<Matrix2<T>, MatrixError>;
+    fn add(self, rhs: Self) -> Self::Output {
+        if self.dim != rhs.dim {
+            return Err(MatrixError::DimensionErr);
+        }
+
+        let mut res = Vec::new();
+        for (l, r) in self.into_iter().zip(rhs) {
+            res.push((l + r).unwrap().to_vec());
+        }
+
+        Ok(Matrix2::from_vec(res).unwrap())
+    }
+}
+
+/// Adds two Matrix2s element-wise.
+impl<'a, T> Add<&'a Matrix1<T>> for &'a Matrix2<T>
+where
+    &'a T: Add<Output = T>,
+{
+    type Output = Result<Matrix2<T>, MatrixError>;
+    fn add(self, rhs: &'a Matrix1<T>) -> Self::Output {
+        // Row lengths must match
+        if self.dim.1 != rhs.dim {
+            return Err(MatrixError::DimensionErr);
+        }
+
+        let mut res = Vec::new();
+        for lrow in self {
+            res.push((lrow + rhs).unwrap().to_vec());
+        }
+
+        Ok(Matrix2::from_vec(res).unwrap())
+    }
+}
+
+impl<T> Matrix2<T> {
     pub fn from_array<const R: usize, const C: usize>(arr: [[T; C]; R]) -> Self {
         let mut data = Vec::new();
 
@@ -147,8 +193,17 @@ impl<T: Default> Matrix2<T> {
             dim: (rows, cols.unwrap_or(0)),
         })
     }
+    pub fn to_vec(self) -> Vec<Vec<T>> {
+        self.into_iter().map(|m| m.to_vec()).collect()
+    }
 
-    pub fn transpose(mut self) -> Self {
+    pub fn iter(&self) -> std::slice::Iter<'_, Matrix1<T>> {
+        self.into_iter()
+    }
+}
+
+impl<T: Default> Transpose for Matrix2<T> {
+    fn transpose(mut self) -> Self {
         let mut transposed = (0..self.dim.1)
             .map(|_| (0..self.dim.0).map(|_| T::default()).collect::<Vec<_>>())
             .collect::<Vec<_>>();
@@ -217,6 +272,14 @@ impl<T> Matrix1<T> {
     /// Returs the rows of this 1d Matrix
     pub fn rows(&self) -> usize {
         self.dim
+    }
+}
+
+impl<T> IntoIterator for Matrix2<T> {
+    type Item = Matrix1<T>;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.into_iter()
     }
 }
 
@@ -312,7 +375,7 @@ mod tests {
     fn matrix2_into_iter() {
         let data = [[1, 2], [2, 2], [4, 8]];
         let matrix = Matrix2::from_array(data);
-        for (row, data) in matrix.into_iter().zip(data) {
+        for (row, data) in matrix.iter().zip(data) {
             assert_eq!(row.data, data);
         }
 
@@ -417,6 +480,46 @@ mod tests {
         let m2 = Matrix2::from_array([[1, 2], [3, 4]]);
 
         let m3 = m1.dot(&m2);
+        assert_eq!(m3, Err(MatrixError::DimensionErr));
+    }
+
+    #[test]
+    fn matrix2_addition() {
+        let m1 = Matrix2::from_array([[1, 2], [3, 4], [5, 6]]);
+        let m2 = Matrix2::from_array([[1, 2], [3, 4], [2, 1]]);
+
+        let m3 = &m1 + &m2;
+        assert_eq!(m3.unwrap().to_vec(), [[2, 4], [6, 8], [7, 7]]);
+    }
+
+    #[test]
+    fn matrix2_addition_err() {
+        // unequal rows
+        let m1 = Matrix2::from_array([[1, 2], [3, 4], [5, 6]]).transpose();
+        let m2 = Matrix2::from_array([[1, 2], [3, 4]]);
+
+        let m3 = &m1 + &m2;
+        assert_eq!(m3, Err(MatrixError::DimensionErr));
+
+        // unequal cols
+        let m1 = Matrix2::from_array([[1, 2], [3, 4], [5, 6]]).transpose();
+        let m2 = Matrix2::from_array([[1, 2, 1], [3, 4, 1], [1, 2, 3]]);
+
+        let m3 = &m1 + &m2;
+        assert_eq!(m3, Err(MatrixError::DimensionErr));
+    }
+
+    #[test]
+    fn matrix2_plus_matrix1() {
+        let matrix = Matrix2::from_array([[1, 2], [2, 2], [4, 8]]);
+        let vec = Matrix1::from_array([1, 2]);
+
+        let m3 = &matrix + &vec;
+        assert_eq!(m3.unwrap().to_vec(), [[2, 4], [3, 4], [5, 10]]);
+
+        let vec = Matrix1::from_array([1]);
+
+        let m3 = &matrix + &vec;
         assert_eq!(m3, Err(MatrixError::DimensionErr));
     }
 }
