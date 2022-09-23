@@ -36,7 +36,7 @@ where
     type Output = Matrix1<T>;
     fn dot(self, rhs: &Matrix1<T>) -> Result<Self::Output, MatrixError> {
         // columns of LHS == rows of RHS
-        if self.dim.1 != rhs.rows() {
+        if self.dim.1 != rhs.size() {
             return Err(MatrixError::DimensionErr);
         }
 
@@ -82,7 +82,7 @@ where
     type Output = T;
     fn dot(self, rhs: &Matrix1<T>) -> Result<Self::Output, MatrixError> {
         // columns of LHS == rows of RHS
-        if self.dim != rhs.rows() {
+        if self.dim != rhs.size() {
             return Err(MatrixError::DimensionErr);
         }
 
@@ -171,6 +171,14 @@ impl<T> Matrix2<T> {
         self.dim
     }
 
+    pub fn column_size(&self) -> usize {
+        self.dim.0
+    }
+
+    pub fn row_size(&self) -> usize {
+        self.dim.1
+    }
+
     pub fn from_vec(vec: Vec<Vec<T>>) -> Result<Self, MatrixError> {
         let mut data = Vec::new();
 
@@ -199,6 +207,13 @@ impl<T> Matrix2<T> {
 
     pub fn iter(&self) -> std::slice::Iter<'_, Matrix1<T>> {
         self.into_iter()
+    }
+
+    /// Applies a function to every element of the matrix
+    pub fn apply(&mut self, f: fn(T) -> T) {
+        for row in self.data.iter_mut() {
+            row.apply(f)
+        }
     }
 }
 
@@ -273,9 +288,15 @@ impl<T> Matrix1<T> {
         &self.data
     }
 
-    /// Returs the rows of this 1d Matrix
-    pub fn rows(&self) -> usize {
+    /// Returns the length of this 1-dimensional Matrix
+    pub fn size(&self) -> usize {
         self.dim
+    }
+
+    /// Applies a function to every element of the matrix
+    pub fn apply(&mut self, f: fn(T) -> T) {
+        let data = std::mem::take(&mut self.data);
+        self.data = data.into_iter().map(|x| f(x)).collect();
     }
 }
 
@@ -525,5 +546,23 @@ mod tests {
 
         let m3 = &matrix + &vec;
         assert_eq!(m3, Err(MatrixError::DimensionErr));
+    }
+
+    #[test]
+    fn matrix1_apply() {
+        let mut matrix = Matrix1::from_array([1, 2, 3, 4, 5]);
+
+        matrix.apply(|x| x * x);
+
+        assert_eq!(matrix.to_vec(), [1, 4, 9, 16, 25]);
+    }
+
+    #[test]
+    fn matrix2_apply() {
+        let mut matrix = Matrix2::from_array([[1, 2], [2, 2], [4, 8]]);
+
+        matrix.apply(|x| x / 2);
+
+        assert_eq!(matrix.to_vec(), [[0, 1], [1, 1], [2, 4]]);
     }
 }
