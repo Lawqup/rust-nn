@@ -26,7 +26,7 @@ pub trait Dot<I> {
 }
 
 pub trait Transpose {
-    fn transpose(self) -> Self;
+    fn transpose(&self) -> Self;
 }
 
 impl<'a, T> Dot<&Matrix1<T>> for &'a Matrix2<T>
@@ -167,8 +167,8 @@ impl<T> Matrix2<T> {
         Self { data, dim: (R, C) }
     }
 
-    pub fn rows(&self) -> usize {
-        self.dim.0
+    pub fn dim(&self) -> (usize, usize) {
+        self.dim
     }
 
     pub fn from_vec(vec: Vec<Vec<T>>) -> Result<Self, MatrixError> {
@@ -202,15 +202,15 @@ impl<T> Matrix2<T> {
     }
 }
 
-impl<T: Default> Transpose for Matrix2<T> {
-    fn transpose(mut self) -> Self {
+impl<T: Default + Copy> Transpose for Matrix2<T> {
+    fn transpose(&self) -> Self {
         let mut transposed = (0..self.dim.1)
             .map(|_| (0..self.dim.0).map(|_| T::default()).collect::<Vec<_>>())
             .collect::<Vec<_>>();
 
         for ri in 0..self.dim.0 {
             for ci in 0..self.dim.1 {
-                transposed[ci][ri] = std::mem::take(&mut self[ri][ci]);
+                transposed[ci][ri] = self[ri][ci];
             }
         }
 
@@ -267,6 +267,10 @@ impl<T> Matrix1<T> {
 
     pub fn to_vec(self) -> Vec<T> {
         self.data
+    }
+
+    pub fn as_vec(&self) -> &Vec<T> {
+        &self.data
     }
 
     /// Returs the rows of this 1d Matrix
