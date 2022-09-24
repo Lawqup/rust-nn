@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use crate::matrix::{Dot, Matrix1, Matrix2, Transpose};
 use rand::distributions::{Distribution, Uniform};
 
@@ -7,17 +9,17 @@ pub enum NNError {
     InputErr,
 }
 
-pub struct DenseLayer {
+pub struct DenseLayer<'a> {
     weights: Matrix2<f32>,
     biases: Matrix1<f32>,
-    activation: fn(f32) -> f32,
+    activation: Box<dyn Fn(f32) -> f32 + 'a>,
 }
 
-pub struct NeuralNet {
-    layers: Vec<DenseLayer>,
+pub struct NeuralNet<'a> {
+    layers: Vec<DenseLayer<'a>>,
 }
 
-impl DenseLayer {
+impl<'a> DenseLayer<'a> {
     /// Initializes a layer given the number of inputs and neurons.
     /// Weights initialized as a random value in [-1.0, 1.0].
     /// Biases initialized as 0.
@@ -40,7 +42,7 @@ impl DenseLayer {
         let biases = Matrix1::from_vec((0..n_neurons).map(|_| 0.0).collect());
 
         // No activation function
-        let activation = |x| x;
+        let activation = Box::new(|x| x);
 
         Self {
             weights,
@@ -50,8 +52,8 @@ impl DenseLayer {
     }
 
     /// Add an activation function of this layer
-    pub fn with_activation(mut self, f: fn(f32) -> f32) -> Self {
-        self.activation = f;
+    pub fn with_activation<F: Fn(f32) -> f32 + 'a>(mut self, f: F) -> Self {
+        self.activation = Box::new(f);
         self
     }
 
@@ -62,7 +64,7 @@ impl DenseLayer {
             .and_then(|m| &m + &self.biases)
         {
             Ok(mut out) => {
-                out.apply(self.activation);
+                out.apply(self.activation.deref());
                 Ok(out)
             }
             Err(_) => Err(NNError::InputErr),
@@ -80,7 +82,7 @@ impl DenseLayer {
     }
 }
 
-impl NeuralNet {
+impl<'a> NeuralNet<'a> {
     /// Creates a 1-layer neural net with some number of neurons
     /// that can accept a certain number of inputs
     pub fn new(n_inputs: u32, n_neurons: u32, activation_function: fn(f32) -> f32) -> Self {
@@ -109,6 +111,18 @@ impl NeuralNet {
             next_input = layer.run_batch(&next_input).unwrap();
         }
         Ok(next_input)
+    }
+
+    /// Normalizes an output such that each set of outputs in the batch add to 1.
+    pub fn normalize(output: Matrix2<f32>) -> Matrix2<f32> {
+        let mut normalized = Vec::new();
+        for mut row in output {
+            let sum: f32 = row.into_iter().sum();
+            row.apply(|x| x / sum);
+            normalized.push(row.to_vec());
+        }
+
+        Matrix2::from_vec(normalized).unwrap()
     }
 }
 
@@ -152,5 +166,21 @@ mod tests {
         assert!(out
             .into_iter()
             .all(|row| row.into_iter().all(|&x| x < 1.0 && x > 0.0)));
+    }
+
+    #[test]
+    fn softmax() {
+        let net = NeuralNet::new(4, 3, |x| x.exp());
+
+        let out = net.run_batch(&default_inputs()).unwrap();
+
+        let normalized = NeuralNet::normalize(out);
+
+        let delta = 0.00001;
+
+        assert!(normalized.iter().all(|row| {
+            let sum = row.into_iter().sum::<f32>();
+            sum < 1.0 + delta && sum > 1.0 - delta
+        }));
     }
 }

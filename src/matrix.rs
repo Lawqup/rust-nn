@@ -210,9 +210,9 @@ impl<T> Matrix2<T> {
     }
 
     /// Applies a function to every element of the matrix
-    pub fn apply(&mut self, f: fn(T) -> T) {
+    pub fn apply<F: Fn(T) -> T>(&mut self, f: F) {
         for row in self.data.iter_mut() {
-            row.apply(f)
+            row.apply(&f)
         }
     }
 }
@@ -294,7 +294,7 @@ impl<T> Matrix1<T> {
     }
 
     /// Applies a function to every element of the matrix
-    pub fn apply(&mut self, f: fn(T) -> T) {
+    pub fn apply<F: Fn(T) -> T>(&mut self, f: F) {
         let data = std::mem::take(&mut self.data);
         self.data = data.into_iter().map(|x| f(x)).collect();
     }
