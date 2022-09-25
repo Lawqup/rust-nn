@@ -126,35 +126,29 @@ impl<'a> NeuralNet<'a> {
         Matrix2::from_vec(normalized).unwrap()
     }
 
-    /// Calculates the categorical cross-entropy loss for each input in a batch.
-    /// Returns an InputErr if prediction and actual data dimensions don't match.
-    /// Also returns an DataFormatErr if actual data is not one-hot encoded.
+    /// Calculates the mean categorical cross-entropy loss for a batch of inputs.
+    /// Returns an InputErr if amount of predictions and class targets don't match.
+    /// Returns a DataFormatErr if a class target does not fit in the prediction.
     pub fn loss_cross_entropy(
         prediction: &Matrix2<f32>,
-        actual: &Matrix2<f32>,
-    ) -> Result<Matrix1<f32>, NNError> {
-        if prediction.dim() != actual.dim() {
+        class_targets: &Matrix1<usize>,
+    ) -> Result<f32, NNError> {
+        // Prediction rows must match class target size
+        if prediction.column_size() != class_targets.size() {
             return Err(NNError::InputErr);
         }
 
         let mut loss = Vec::new();
-        for (pred, act) in prediction.iter().zip(actual.iter()) {
-            // check for one-hot encoding error
-            let mut a_sum = 0.0;
-            for (i, a) in act.into_iter().enumerate() {
-                a_sum += a;
-
-                if a == &1.0 {
-                    loss.push(-pred[i].ln());
-                }
-            }
-
-            if a_sum != 1.0 {
+        for (pred, &target) in prediction.iter().zip(class_targets) {
+            // Target doesnt exist in prediction
+            if target >= pred.size() {
                 return Err(NNError::DataFormatErr);
             }
+
+            loss.push(-pred[target].clamp(1e-7, 1.0).ln());
         }
 
-        Ok(Matrix1::from_vec(loss))
+        Ok(loss.iter().sum::<f32>() / loss.len() as f32)
     }
 }
 
@@ -162,24 +156,30 @@ impl<'a> NeuralNet<'a> {
 mod tests {
     use super::*;
 
-    fn inside_unit_circle_data(size: u32) -> (Matrix2<f32>, Matrix2<f32>) {
-        let size = size as i32;
+    fn inside_unit_circle_data(axis_size: u32) -> (Matrix2<f32>, Matrix1<usize>) {
+        let axis_size = axis_size as i64;
         let mut input = Vec::new();
-        let mut real_output = Vec::new();
+        let mut class_targets = Vec::new();
         let func = |x, y| x * x + y * y;
-        for (x, y) in (-1 * size / 2..size / 2).zip(-1 * size / 2..size / 2) {
-            // fit data between -1 and 1;
-            let (x, y) = (x as f32 / size as f32, y as f32 / size as f32);
-            input.push(vec![x, y]);
-            real_output.push(vec![
-                (func(x, y) <= 1.0) as i32 as f32,
-                (func(x, y) > 1.0) as i32 as f32,
-            ]);
+
+        for x in -axis_size / 2..=axis_size / 2 {
+            for y in -axis_size / 2..=axis_size / 2 {
+                // fit data between -1 and 1;
+                let (x, y) = (
+                    (2 * x) as f32 / axis_size as f32,
+                    (2 * y) as f32 / axis_size as f32,
+                );
+                input.push(vec![x, y]);
+
+                // 0th class => in circle
+                // 1st class => outside of circle
+                class_targets.push((func(x, y) > 1.0) as usize);
+            }
         }
 
         (
             Matrix2::from_vec(input).unwrap(),
-            Matrix2::from_vec(real_output).unwrap(),
+            Matrix1::from_vec(class_targets),
         )
     }
 
@@ -243,20 +243,20 @@ mod tests {
         let mut net = NeuralNet::new(2, 10, |x| x.max(0.0));
         net.add_layer(2, |x| x.exp());
 
-        let (input, actual) = &inside_unit_circle_data(1000);
+        let (input, targets) = &inside_unit_circle_data(30);
 
         let out = net.run_batch(input).unwrap();
 
         let normalized = &NeuralNet::normalize(out);
 
-        let loss = NeuralNet::loss_cross_entropy(normalized, actual).unwrap();
+        let loss = NeuralNet::loss_cross_entropy(normalized, targets).unwrap();
 
-        assert!(loss.into_iter().all(|x| x > &0.0));
+        assert!(loss > 0.0);
 
         let normalized = &Matrix2::from_array([[0.7, 0.3]]);
-        let actual = &Matrix2::from_array([[1.0, 0.1]]);
+        let targets = &Matrix1::from_array([2]);
 
-        let loss = NeuralNet::loss_cross_entropy(normalized, actual);
+        let loss = NeuralNet::loss_cross_entropy(normalized, targets);
 
         assert_eq!(loss, Err(NNError::DataFormatErr));
     }
