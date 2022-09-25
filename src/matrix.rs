@@ -201,8 +201,17 @@ impl<T> Matrix2<T> {
             dim: (rows, cols.unwrap_or(0)),
         })
     }
+
     pub fn to_vec(self) -> Vec<Vec<T>> {
         self.into_iter().map(|m| m.to_vec()).collect()
+    }
+
+    pub fn as_vec(&self) -> Vec<&Vec<T>> {
+        let mut res = Vec::new();
+        for row in self.data.iter() {
+            res.push(row.as_vec());
+        }
+        res
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, Matrix1<T>> {
