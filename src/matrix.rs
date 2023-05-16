@@ -1,12 +1,12 @@
-use std::ops::{Add, AddAssign, Index, IndexMut, Mul};
+use std::ops::{Add, AddAssign, Index, IndexMut, Mul, Sub};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Matrix2<T> {
     data: Vec<Matrix1<T>>,
     dim: (usize, usize),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Matrix1<T> {
     data: Vec<T>,
     dim: usize,
@@ -109,6 +109,46 @@ where
         let mut res = Vec::new();
         for (l, r) in self.into_iter().zip(rhs) {
             res.push(l + r);
+        }
+
+        Ok(Matrix1::from_vec(res))
+    }
+}
+
+/// Subtracts two Matrix1s element-wise.
+impl<'a, T> Sub for &'a Matrix1<T>
+where
+    &'a T: Sub<Output = T>,
+{
+    type Output = Result<Matrix1<T>, MatrixError>;
+    fn sub(self, rhs: Self) -> Self::Output {
+        if self.dim != rhs.dim {
+            return Err(MatrixError::DimensionErr);
+        }
+
+        let mut res = Vec::new();
+        for (l, r) in self.into_iter().zip(rhs) {
+            res.push(l - r);
+        }
+
+        Ok(Matrix1::from_vec(res))
+    }
+}
+
+/// Subtracts two Matrix1s element-wise.
+impl<T> Sub for Matrix1<T>
+where
+    T: Sub<Output = T> + Copy,
+{
+    type Output = Result<Matrix1<T>, MatrixError>;
+    fn sub(self, rhs: Self) -> Self::Output {
+        if self.dim != rhs.dim {
+            return Err(MatrixError::DimensionErr);
+        }
+
+        let mut res = Vec::new();
+        for (l, r) in self.into_iter().zip(rhs.into_iter()) {
+            res.push(*l - *r);
         }
 
         Ok(Matrix1::from_vec(res))
@@ -218,6 +258,10 @@ impl<T> Matrix2<T> {
         self.into_iter()
     }
 
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Matrix1<T>> {
+        self.into_iter()
+    }
+
     /// Applies a function to every element of the matrix
     pub fn apply<F: Fn(T) -> T>(&mut self, f: F) {
         for row in self.data.iter_mut() {
@@ -307,6 +351,10 @@ impl<T> Matrix1<T> {
         let data = std::mem::take(&mut self.data);
         self.data = data.into_iter().map(|x| f(x)).collect();
     }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.into_iter()
+    }
 }
 
 impl<T> IntoIterator for Matrix2<T> {
@@ -325,11 +373,48 @@ impl<'a, T> IntoIterator for &'a Matrix2<T> {
     }
 }
 
+impl<'a, T> IntoIterator for &'a mut Matrix2<T> {
+    type Item = &'a mut Matrix1<T>;
+    type IntoIter = std::slice::IterMut<'a, Matrix1<T>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.iter_mut()
+    }
+}
+
 impl<'a, T> IntoIterator for &'a Matrix1<T> {
     type Item = &'a T;
     type IntoIter = std::slice::Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
         self.data.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut Matrix1<T> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.iter_mut()
+    }
+}
+
+impl From<Matrix1<i32>> for Matrix1<f64> {
+    fn from(value: Matrix1<i32>) -> Self {
+        return Matrix1::from_vec(value.into_iter().map(|v| *v as f64).collect());
+    }
+}
+
+impl From<Matrix2<i32>> for Matrix2<f64> {
+    fn from(value: Matrix2<i32>) -> Self {
+        return Matrix2::from_vec(
+            value
+                .into_iter()
+                .map(|v| {
+                    let int: Matrix1<f64> = v.into();
+                    int.to_vec()
+                })
+                .collect(),
+        )
+        .unwrap();
     }
 }
 

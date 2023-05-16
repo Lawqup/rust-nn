@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{fmt::Debug, ops::Deref, rc::Rc};
 
 use crate::matrix::{Dot, Matrix1, Matrix2, Transpose};
 use rand::distributions::{Distribution, Uniform};
@@ -10,12 +10,14 @@ pub enum NNError {
     DataFormatErr,
 }
 
+#[derive(Clone)]
 pub struct DenseLayer<'a> {
-    weights: Matrix2<f32>,
-    biases: Matrix1<f32>,
-    activation: Box<dyn Fn(f32) -> f32 + 'a>,
+    weights: Matrix2<f64>,
+    biases: Matrix1<f64>,
+    activation: Rc<dyn Fn(f64) -> f64 + 'a>,
 }
 
+#[derive(Clone)]
 pub struct NeuralNet<'a> {
     layers: Vec<DenseLayer<'a>>,
 }
@@ -43,7 +45,7 @@ impl<'a> DenseLayer<'a> {
         let biases = Matrix1::from_vec((0..n_neurons).map(|_| 0.0).collect());
 
         // No activation function
-        let activation = Box::new(|x| x);
+        let activation = Rc::new(|x| x);
 
         Self {
             weights,
@@ -53,13 +55,13 @@ impl<'a> DenseLayer<'a> {
     }
 
     /// Add an activation function of this layer
-    pub fn with_activation<F: Fn(f32) -> f32 + 'a>(mut self, f: F) -> Self {
-        self.activation = Box::new(f);
+    pub fn with_activation<F: Fn(f64) -> f64 + 'a>(mut self, f: F) -> Self {
+        self.activation = Rc::new(f);
         self
     }
 
     /// Propogates a batch of inputs through the layer applying the activation function.
-    pub fn run_batch(&self, input: &Matrix2<f32>) -> Result<Matrix2<f32>, NNError> {
+    pub fn run_batch(&self, input: &Matrix2<f64>) -> Result<Matrix2<f64>, NNError> {
         match input
             .dot(&self.weights.transpose())
             .and_then(|m| &m + &self.biases)
@@ -72,42 +74,42 @@ impl<'a> DenseLayer<'a> {
         }
     }
 
-    /// Returns the amount of neurons in the layer
-    pub fn neuron_amount(&self) -> u32 {
-        self.biases.size() as u32
-    }
-
     /// Returns the amount of inputs this layer accepts
     pub fn input_amount(&self) -> u32 {
         self.weights.dim().1 as u32
+    }
+
+    /// Returns the amount of neurons in the layer
+    pub fn neuron_amount(&self) -> u32 {
+        self.weights.dim().0 as u32
     }
 }
 
 impl<'a> NeuralNet<'a> {
     /// Creates a 1-layer neural net with some number of neurons
     /// that can accept a certain number of inputs
-    pub fn new(n_inputs: u32, n_neurons: u32, activation_function: fn(f32) -> f32) -> Self {
+    pub fn new(n_inputs: u32, n_neurons: u32, activation_function: fn(f64) -> f64) -> Self {
         Self {
             layers: vec![DenseLayer::new(n_inputs, n_neurons).with_activation(activation_function)],
         }
     }
 
-    pub fn add_layer(&mut self, n_neurons: u32, activation_function: fn(f32) -> f32) {
+    pub fn add_layer(&mut self, n_neurons: u32, activation_function: fn(f64) -> f64) {
         let n_inputs = self.layers.last().unwrap().neuron_amount();
         self.layers
             .push(DenseLayer::new(n_inputs, n_neurons).with_activation(activation_function));
     }
 
     /// Propogates a batch of inputs through layers
-    pub fn run_batch(&self, input: &Matrix2<f32>) -> Result<Matrix2<f32>, NNError> {
+    pub fn run_batch(&self, inputs: &Matrix2<f64>) -> Result<Matrix2<f64>, NNError> {
         // NN has to be initialized with at least one layer
         let first_layer = self.layers.first().unwrap();
 
-        if input.row_size() as u32 != first_layer.input_amount() {
+        if inputs.row_size() as u32 != first_layer.input_amount() {
             return Err(NNError::InputErr);
         }
 
-        let mut next_input = first_layer.run_batch(input).unwrap();
+        let mut next_input = first_layer.run_batch(inputs).unwrap();
         for layer in self.layers.iter().skip(1) {
             next_input = layer.run_batch(&next_input).unwrap();
         }
@@ -115,10 +117,10 @@ impl<'a> NeuralNet<'a> {
     }
 
     /// Normalizes an output such that each set of outputs in the batch add to 1.
-    pub fn normalize(input: Matrix2<f32>) -> Matrix2<f32> {
+    pub fn normalize(input: Matrix2<f64>) -> Matrix2<f64> {
         let mut normalized = Vec::new();
         for mut row in input {
-            let sum: f32 = row.into_iter().sum();
+            let sum: f64 = row.into_iter().sum();
             row.apply(|x| x / sum);
             normalized.push(row.to_vec());
         }
@@ -130,9 +132,9 @@ impl<'a> NeuralNet<'a> {
     /// Returns an InputErr if amount of predictions and class targets don't match.
     /// Returns a DataFormatErr if a class target does not fit in the prediction.
     pub fn loss_cross_entropy(
-        prediction: &Matrix2<f32>,
+        prediction: &Matrix2<f64>,
         class_targets: &Matrix1<usize>,
-    ) -> Result<f32, NNError> {
+    ) -> Result<f64, NNError> {
         // Prediction rows must match class target size
         if prediction.column_size() != class_targets.size() {
             return Err(NNError::InputErr);
@@ -148,7 +150,73 @@ impl<'a> NeuralNet<'a> {
             loss.push(-pred[target].clamp(1e-7, 1.0).ln());
         }
 
-        Ok(loss.iter().sum::<f32>() / loss.len() as f32)
+        Ok(loss.iter().sum::<f64>() / loss.len() as f64)
+    }
+
+    /// Mean-squared error
+    pub fn mean_squared_error(
+        &self,
+        inputs: &Matrix2<f64>,
+        targets: &Matrix2<f64>,
+    ) -> Result<f64, NNError> {
+        // Prediction rows must match class target size
+        let outputs = self.run_batch(inputs)?;
+        if outputs.dim() != targets.dim() {
+            return Err(NNError::InputErr);
+        }
+
+        let sum: f64 = outputs
+            .iter()
+            .zip(targets.iter())
+            .map(|(y, y_hat)| {
+                let mut diff = (y - y_hat).unwrap();
+                diff.apply(|x| x * x);
+                diff.iter().sum::<f64>() / diff.size() as f64
+            })
+            .sum();
+        Ok(sum / targets.column_size() as f64)
+    }
+
+    pub fn train(
+        &mut self,
+        iterations: usize,
+        eps: f64,
+        rate: f64,
+        inputs: &Matrix2<f64>,
+        targets: &Matrix2<f64>,
+    ) {
+        for _ in 0..iterations {
+            let mut w_grads = Vec::new();
+            let mut b_grads = Vec::new();
+
+            let costs = &self.mean_squared_error(&inputs, &targets).unwrap();
+            for i in 0..self.layers.len() {
+                w_grads.push(self.layers[i].weights.clone());
+                b_grads.push(self.layers[i].biases.clone());
+
+                for j in 0..self.layers[i].weights.column_size() {
+                    for k in 0..self.layers[i].weights.row_size() {
+                        let saved = self.layers[i].weights[j][k];
+                        self.layers[i].weights[j][k] += eps;
+                        let dw =
+                            (&self.mean_squared_error(&inputs, &targets).unwrap() - costs) / eps;
+                        self.layers[i].weights[j][k] = saved;
+                        w_grads[i][j][k] = -rate * dw;
+                    }
+
+                    let saved = self.layers[i].biases[j];
+                    self.layers[i].biases[j] += eps;
+                    let db = (&self.mean_squared_error(&inputs, &targets).unwrap() - costs) / eps;
+                    self.layers[i].biases[j] = saved;
+                    b_grads[i][j] = -rate * db;
+                }
+            }
+
+            for i in 0..w_grads.len() {
+                self.layers[i].weights = (&self.layers[i].weights + &w_grads[i]).unwrap();
+                self.layers[i].biases = (&self.layers[i].biases + &b_grads[i]).unwrap();
+            }
+        }
     }
 }
 
@@ -156,7 +224,7 @@ impl<'a> NeuralNet<'a> {
 mod tests {
     use super::*;
 
-    fn inside_unit_circle_data(axis_size: u32) -> (Matrix2<f32>, Matrix1<usize>) {
+    fn inside_unit_circle_data(axis_size: u32) -> (Matrix2<f64>, Matrix1<usize>) {
         let axis_size = axis_size as i64;
         let mut input = Vec::new();
         let mut class_targets = Vec::new();
@@ -166,8 +234,8 @@ mod tests {
             for y in -axis_size / 2..=axis_size / 2 {
                 // fit data between -1 and 1;
                 let (x, y) = (
-                    (2 * x) as f32 / axis_size as f32,
-                    (2 * y) as f32 / axis_size as f32,
+                    (2 * x) as f64 / axis_size as f64,
+                    (2 * y) as f64 / axis_size as f64,
                 );
                 input.push(vec![x, y]);
 
@@ -183,7 +251,7 @@ mod tests {
         )
     }
 
-    fn default_inputs() -> Matrix2<f32> {
+    fn default_inputs() -> Matrix2<f64> {
         Matrix2::from_array([
             [1.0, 2.0, 3.0, 2.5],
             [2.0, 5.0, -1.0, 2.0],
@@ -192,7 +260,7 @@ mod tests {
         ])
     }
 
-    fn sigmoid(x: f32) -> f32 {
+    fn sigmoid(x: f64) -> f64 {
         1.0 / (1.0 + (-x).exp())
     }
 
@@ -233,7 +301,7 @@ mod tests {
         let delta = 0.00001;
 
         assert!(normalized.iter().all(|row| {
-            let sum = row.into_iter().sum::<f32>();
+            let sum = row.into_iter().sum::<f64>();
             sum < 1.0 + delta && sum > 1.0 - delta
         }));
     }
@@ -259,5 +327,57 @@ mod tests {
         let loss = NeuralNet::loss_cross_entropy(normalized, targets);
 
         assert_eq!(loss, Err(NNError::DataFormatErr));
+    }
+
+    #[test]
+    fn train_or() {
+        // Train a single neuron to compute OR
+        let mut net = NeuralNet::new(2, 1, sigmoid);
+
+        let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
+        let targets = Matrix2::from_array([[0], [1], [1], [1]]).into();
+
+        let eps = 10e-4;
+        let rate = 10e-2;
+
+        net.train(10000, eps, rate, &inputs, &targets);
+
+        let fin = net.mean_squared_error(&inputs, &targets).unwrap();
+
+        println!("------------------");
+        println!("Final cost: {fin}");
+
+        let res = net.run_batch(&inputs).unwrap();
+        for (inp, out) in inputs.iter().zip(res) {
+            println!("{:?} -> {}", inp.as_vec(), out[0])
+        }
+
+        assert!(fin < 0.01);
+    }
+
+    #[test]
+    fn train_xor() {
+        let mut net = NeuralNet::new(2, 2, sigmoid);
+        net.add_layer(1, sigmoid);
+
+        let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
+        let targets = Matrix2::from_array([[0], [1], [1], [0]]).into();
+
+        let eps = 10e-2;
+        let rate = 10e-2;
+
+        net.train(100 * 1000, eps, rate, &inputs, &targets);
+
+        let fin = net.mean_squared_error(&inputs, &targets).unwrap();
+
+        println!("------------------");
+        println!("Final cost: {fin}");
+
+        let res = net.run_batch(&inputs).unwrap();
+        for (inp, out) in inputs.iter().zip(res) {
+            println!("{:?} -> {}", inp.as_vec(), out[0])
+        }
+
+        assert!(fin < 0.001);
     }
 }
