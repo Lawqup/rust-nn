@@ -128,31 +128,6 @@ impl<'a> NeuralNet<'a> {
         Matrix2::from_vec(normalized).unwrap()
     }
 
-    /// Calculates the mean categorical cross-entropy loss for a batch of inputs.
-    /// Returns an InputErr if amount of predictions and class targets don't match.
-    /// Returns a DataFormatErr if a class target does not fit in the prediction.
-    pub fn loss_cross_entropy(
-        prediction: &Matrix2<f64>,
-        class_targets: &Matrix1<usize>,
-    ) -> Result<f64, NNError> {
-        // Prediction rows must match class target size
-        if prediction.column_size() != class_targets.size() {
-            return Err(NNError::InputErr);
-        }
-
-        let mut loss = Vec::new();
-        for (pred, &target) in prediction.iter().zip(class_targets) {
-            // Target doesnt exist in prediction
-            if target >= pred.size() {
-                return Err(NNError::DataFormatErr);
-            }
-
-            loss.push(-pred[target].clamp(1e-7, 1.0).ln());
-        }
-
-        Ok(loss.iter().sum::<f64>() / loss.len() as f64)
-    }
-
     /// Mean-squared error
     pub fn mean_squared_error(
         &self,
@@ -184,12 +159,12 @@ impl<'a> NeuralNet<'a> {
         rate: f64,
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
-    ) {
+    ) -> Result<(), NNError> {
         for _ in 0..iterations {
             let mut w_grads = Vec::new();
             let mut b_grads = Vec::new();
 
-            let costs = &self.mean_squared_error(&inputs, &targets).unwrap();
+            let costs = &self.mean_squared_error(&inputs, &targets)?;
             for i in 0..self.layers.len() {
                 w_grads.push(self.layers[i].weights.clone());
                 b_grads.push(self.layers[i].biases.clone());
@@ -198,15 +173,16 @@ impl<'a> NeuralNet<'a> {
                     for k in 0..self.layers[i].weights.row_size() {
                         let saved = self.layers[i].weights[j][k];
                         self.layers[i].weights[j][k] += eps;
-                        let dw =
-                            (&self.mean_squared_error(&inputs, &targets).unwrap() - costs) / eps;
+                        let dw = (&self.mean_squared_error(&inputs, &targets)? - costs) / eps;
+
                         self.layers[i].weights[j][k] = saved;
                         w_grads[i][j][k] = -rate * dw;
                     }
 
                     let saved = self.layers[i].biases[j];
                     self.layers[i].biases[j] += eps;
-                    let db = (&self.mean_squared_error(&inputs, &targets).unwrap() - costs) / eps;
+                    let db = (&self.mean_squared_error(&inputs, &targets)? - costs) / eps;
+
                     self.layers[i].biases[j] = saved;
                     b_grads[i][j] = -rate * db;
                 }
@@ -217,6 +193,7 @@ impl<'a> NeuralNet<'a> {
                 self.layers[i].biases = (&self.layers[i].biases + &b_grads[i]).unwrap();
             }
         }
+        Ok(())
     }
 }
 
@@ -224,7 +201,7 @@ impl<'a> NeuralNet<'a> {
 mod tests {
     use super::*;
 
-    fn inside_unit_circle_data(axis_size: u32) -> (Matrix2<f64>, Matrix1<usize>) {
+    fn inside_unit_circle_data(axis_size: u32) -> (Matrix2<f64>, Matrix2<f64>) {
         let axis_size = axis_size as i64;
         let mut input = Vec::new();
         let mut class_targets = Vec::new();
@@ -241,13 +218,13 @@ mod tests {
 
                 // 0th class => in circle
                 // 1st class => outside of circle
-                class_targets.push((func(x, y) > 1.0) as usize);
+                class_targets.push(vec![(func(x, y) > 1.0) as usize as f64]);
             }
         }
 
         (
             Matrix2::from_vec(input).unwrap(),
-            Matrix1::from_vec(class_targets),
+            Matrix2::from_vec(class_targets).unwrap(),
         )
     }
 
@@ -307,29 +284,6 @@ mod tests {
     }
 
     #[test]
-    fn categorical_cross_entropy() {
-        let mut net = NeuralNet::new(2, 10, |x| x.max(0.0));
-        net.add_layer(2, |x| x.exp());
-
-        let (input, targets) = &inside_unit_circle_data(30);
-
-        let out = net.run_batch(input).unwrap();
-
-        let normalized = &NeuralNet::normalize(out);
-
-        let loss = NeuralNet::loss_cross_entropy(normalized, targets).unwrap();
-
-        assert!(loss > 0.0);
-
-        let normalized = &Matrix2::from_array([[0.7, 0.3]]);
-        let targets = &Matrix1::from_array([2]);
-
-        let loss = NeuralNet::loss_cross_entropy(normalized, targets);
-
-        assert_eq!(loss, Err(NNError::DataFormatErr));
-    }
-
-    #[test]
     fn train_or() {
         // Train a single neuron to compute OR
         let mut net = NeuralNet::new(2, 1, sigmoid);
@@ -340,7 +294,7 @@ mod tests {
         let eps = 10e-4;
         let rate = 10e-2;
 
-        net.train(10000, eps, rate, &inputs, &targets);
+        assert_eq!(Ok(()), net.train(10000, eps, rate, &inputs, &targets));
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
@@ -366,7 +320,7 @@ mod tests {
         let eps = 10e-2;
         let rate = 10e-2;
 
-        net.train(100 * 1000, eps, rate, &inputs, &targets);
+        assert_eq!(Ok(()), net.train(100 * 1000, eps, rate, &inputs, &targets));
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
@@ -376,6 +330,32 @@ mod tests {
         let res = net.run_batch(&inputs).unwrap();
         for (inp, out) in inputs.iter().zip(res) {
             println!("{:?} -> {}", inp.as_vec(), out[0])
+        }
+
+        assert!(fin < 0.001);
+    }
+
+    #[test]
+    fn train_multi_in_multi_out() {
+        let mut net = NeuralNet::new(2, 2, sigmoid);
+        net.add_layer(2, sigmoid);
+
+        let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
+        let targets = Matrix2::from_array([[0, 0], [1, 0], [1, 0], [0, 1]]).into();
+
+        let eps = 10e-2;
+        let rate = 10e-2;
+
+        assert_eq!(Ok(()), net.train(100 * 1000, eps, rate, &inputs, &targets));
+
+        let fin = net.mean_squared_error(&inputs, &targets).unwrap();
+
+        println!("------------------");
+        println!("Final cost: {fin}");
+
+        let res = net.run_batch(&inputs).unwrap();
+        for (inp, out) in inputs.iter().zip(res) {
+            println!("{:?} -> {:?}", inp.as_vec(), out.as_vec())
         }
 
         assert!(fin < 0.001);
