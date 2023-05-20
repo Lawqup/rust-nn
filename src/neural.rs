@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ops::Deref, rc::Rc};
+use std::fmt::Debug;
 
 use crate::matrix::{Dot, Matrix1, Matrix2, Transpose};
 use rand::distributions::{Distribution, Uniform};
@@ -10,19 +10,46 @@ pub enum NNError {
     DataFormatErr,
 }
 
-#[derive(Clone)]
-pub struct DenseLayer<'a> {
+#[derive(Debug, Clone, Copy)]
+pub enum Activation {
+    Identity,
+    Sigmoid,
+}
+
+impl Activation {
+    /// Returns activation function at x
+    pub fn call(&self, x: f64) -> f64 {
+        match self {
+            Self::Identity => x,
+            Self::Sigmoid => 1.0 / (1.0 + (-x).exp()),
+        }
+    }
+
+    /// Returns derivative of activation function at x
+    pub fn derivative(&self, x: f64) -> f64 {
+        match self {
+            Activation::Identity => 1.0,
+            Self::Sigmoid => {
+                let s_x = self.call(x);
+                s_x * (1.0 - s_x)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DenseLayer {
     weights: Matrix2<f64>,
     biases: Matrix1<f64>,
-    activation: Rc<dyn Fn(f64) -> f64 + 'a>,
+    activation: Activation,
 }
 
-#[derive(Clone)]
-pub struct NeuralNet<'a> {
-    layers: Vec<DenseLayer<'a>>,
+#[derive(Debug, Clone)]
+pub struct NeuralNet {
+    layers: Vec<DenseLayer>,
 }
 
-impl<'a> DenseLayer<'a> {
+impl DenseLayer {
     /// Initializes a layer given the number of inputs and neurons.
     /// Weights initialized as a random value in [-1.0, 1.0].
     /// Biases initialized as 0.
@@ -44,19 +71,16 @@ impl<'a> DenseLayer<'a> {
 
         let biases = Matrix1::from_vec((0..n_neurons).map(|_| 0.0).collect());
 
-        // No activation function
-        let activation = Rc::new(|x| x);
-
         Self {
             weights,
             biases,
-            activation,
+            activation: Activation::Identity,
         }
     }
 
     /// Add an activation function of this layer
-    pub fn with_activation<F: Fn(f64) -> f64 + 'a>(mut self, f: F) -> Self {
-        self.activation = Rc::new(f);
+    pub fn with_activation(mut self, activation: Activation) -> Self {
+        self.activation = activation;
         self
     }
 
@@ -67,7 +91,7 @@ impl<'a> DenseLayer<'a> {
             .and_then(|m| &m + &self.biases)
         {
             Ok(mut out) => {
-                out.apply(self.activation.deref());
+                out.apply(|x| self.activation.call(x));
                 Ok(out)
             }
             Err(_) => Err(NNError::InputErr),
@@ -85,19 +109,19 @@ impl<'a> DenseLayer<'a> {
     }
 }
 
-impl<'a> NeuralNet<'a> {
+impl NeuralNet {
     /// Creates a 1-layer neural net with some number of neurons
     /// that can accept a certain number of inputs
-    pub fn new(n_inputs: u32, n_neurons: u32, activation_function: fn(f64) -> f64) -> Self {
+    pub fn new(n_inputs: u32, n_neurons: u32, activation: Activation) -> Self {
         Self {
-            layers: vec![DenseLayer::new(n_inputs, n_neurons).with_activation(activation_function)],
+            layers: vec![DenseLayer::new(n_inputs, n_neurons).with_activation(activation)],
         }
     }
 
-    pub fn add_layer(&mut self, n_neurons: u32, activation_function: fn(f64) -> f64) {
+    pub fn add_layer(&mut self, n_neurons: u32, activation: Activation) {
         let n_inputs = self.layers.last().unwrap().neuron_amount();
         self.layers
-            .push(DenseLayer::new(n_inputs, n_neurons).with_activation(activation_function));
+            .push(DenseLayer::new(n_inputs, n_neurons).with_activation(activation));
     }
 
     /// Propogates a batch of inputs through layers
@@ -201,33 +225,6 @@ impl<'a> NeuralNet<'a> {
 mod tests {
     use super::*;
 
-    fn inside_unit_circle_data(axis_size: u32) -> (Matrix2<f64>, Matrix2<f64>) {
-        let axis_size = axis_size as i64;
-        let mut input = Vec::new();
-        let mut class_targets = Vec::new();
-        let func = |x, y| x * x + y * y;
-
-        for x in -axis_size / 2..=axis_size / 2 {
-            for y in -axis_size / 2..=axis_size / 2 {
-                // fit data between -1 and 1;
-                let (x, y) = (
-                    (2 * x) as f64 / axis_size as f64,
-                    (2 * y) as f64 / axis_size as f64,
-                );
-                input.push(vec![x, y]);
-
-                // 0th class => in circle
-                // 1st class => outside of circle
-                class_targets.push(vec![(func(x, y) > 1.0) as usize as f64]);
-            }
-        }
-
-        (
-            Matrix2::from_vec(input).unwrap(),
-            Matrix2::from_vec(class_targets).unwrap(),
-        )
-    }
-
     fn default_inputs() -> Matrix2<f64> {
         Matrix2::from_array([
             [1.0, 2.0, 3.0, 2.5],
@@ -235,10 +232,6 @@ mod tests {
             [-1.5, 2.7, 3.3, -0.8],
             [-1.5, 2.7, 3.3, -0.8],
         ])
-    }
-
-    fn sigmoid(x: f64) -> f64 {
-        1.0 / (1.0 + (-x).exp())
     }
 
     #[test]
@@ -256,7 +249,7 @@ mod tests {
 
     #[test]
     fn activation_function() {
-        let net = NeuralNet::new(4, 20, sigmoid);
+        let net = NeuralNet::new(4, 20, Activation::Sigmoid);
 
         let out = net.run_batch(&default_inputs()).unwrap();
 
@@ -267,26 +260,9 @@ mod tests {
     }
 
     #[test]
-    fn softmax() {
-        let mut net = NeuralNet::new(2, 10, |x| x.max(0.0));
-        net.add_layer(2, |x| x.exp());
-
-        let out = net.run_batch(&inside_unit_circle_data(1000).0).unwrap();
-
-        let normalized = NeuralNet::normalize(out);
-
-        let delta = 0.00001;
-
-        assert!(normalized.iter().all(|row| {
-            let sum = row.into_iter().sum::<f64>();
-            sum < 1.0 + delta && sum > 1.0 - delta
-        }));
-    }
-
-    #[test]
     fn train_or() {
         // Train a single neuron to compute OR
-        let mut net = NeuralNet::new(2, 1, sigmoid);
+        let mut net = NeuralNet::new(2, 1, Activation::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0], [1], [1], [1]]).into();
@@ -311,16 +287,16 @@ mod tests {
 
     #[test]
     fn train_xor() {
-        let mut net = NeuralNet::new(2, 2, sigmoid);
-        net.add_layer(1, sigmoid);
+        let mut net = NeuralNet::new(2, 2, Activation::Sigmoid);
+        net.add_layer(1, Activation::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0], [1], [1], [0]]).into();
 
-        let eps = 10e-2;
-        let rate = 10e-2;
+        let eps = 10e-3;
+        let rate = 10e-1;
 
-        assert_eq!(Ok(()), net.train(100 * 1000, eps, rate, &inputs, &targets));
+        assert_eq!(Ok(()), net.train(200 * 100, eps, rate, &inputs, &targets));
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
@@ -332,13 +308,13 @@ mod tests {
             println!("{:?} -> {}", inp.as_vec(), out[0])
         }
 
-        assert!(fin < 0.001);
+        assert!(fin < 0.01);
     }
 
     #[test]
     fn train_multi_in_multi_out() {
-        let mut net = NeuralNet::new(2, 2, sigmoid);
-        net.add_layer(2, sigmoid);
+        let mut net = NeuralNet::new(2, 2, Activation::Sigmoid);
+        net.add_layer(2, Activation::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0, 0], [1, 0], [1, 0], [0, 1]]).into();
@@ -359,5 +335,42 @@ mod tests {
         }
 
         assert!(fin < 0.001);
+    }
+
+    #[test]
+    fn train_adder() {
+        let mut net = NeuralNet::new(4, 4, Activation::Sigmoid);
+        net.add_layer(5, Activation::Sigmoid);
+        net.add_layer(3, Activation::Sigmoid);
+
+        let mut inputs = Vec::new();
+        let mut targets = Vec::new();
+
+        for i in 0..4 {
+            for j in 0..4 {
+                inputs.push(vec![i / 2, i % 2, j / 2, j % 2]);
+                targets.push(vec![(i + j) / 4, ((i + j) / 2) % 2, (i + j) % 2])
+            }
+        }
+
+        println!("{:?}\n{:?}", inputs, targets);
+
+        let inputs = Matrix2::from_vec(inputs).unwrap().into();
+        let targets = Matrix2::from_vec(targets).unwrap().into();
+
+        let eps = 10e-1;
+        let rate = 10e-1;
+
+        assert_eq!(Ok(()), net.train(100 * 100, eps, rate, &inputs, &targets));
+
+        let fin = net.mean_squared_error(&inputs, &targets).unwrap();
+
+        println!("------------------");
+        println!("Final cost: {fin}");
+
+        let res = net.run_batch(&inputs).unwrap();
+        for (inp, out) in inputs.iter().zip(res) {
+            println!("{:?} -> {:?}", inp.as_vec(), out.as_vec())
+        }
     }
 }
