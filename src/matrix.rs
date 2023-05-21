@@ -196,6 +196,21 @@ where
     }
 }
 
+impl<T: Default + Clone> Matrix2<T> {
+    pub fn new(rows: usize, cols: usize) -> Self {
+        let mut data = Vec::new();
+
+        for _ in 0..rows {
+            data.push(Matrix1::new(cols));
+        }
+
+        Self {
+            data,
+            dim: (rows, cols),
+        }
+    }
+}
+
 impl<T> Matrix2<T> {
     pub fn from_array<const R: usize, const C: usize>(arr: [[T; C]; R]) -> Self {
         let mut data = Vec::new();
@@ -211,11 +226,11 @@ impl<T> Matrix2<T> {
         self.dim
     }
 
-    pub fn column_size(&self) -> usize {
+    pub fn rows(&self) -> usize {
         self.dim.0
     }
 
-    pub fn row_size(&self) -> usize {
+    pub fn cols(&self) -> usize {
         self.dim.1
     }
 
@@ -309,6 +324,15 @@ impl<T> Index<usize> for Matrix1<T> {
 impl<T> IndexMut<usize> for Matrix1<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.data[index]
+    }
+}
+
+impl<T: Default + Clone> Matrix1<T> {
+    pub fn new(size: usize) -> Self {
+        Self {
+            data: vec![T::default(); size],
+            dim: size,
+        }
     }
 }
 

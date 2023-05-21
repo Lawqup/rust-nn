@@ -1,7 +1,14 @@
 use std::fmt::Debug;
 
-use crate::matrix::{Dot, Matrix1, Matrix2, Transpose};
-use rand::distributions::{Distribution, Uniform};
+use crate::{
+    activations::{Activation, Activations},
+    matrix::{Dot, Matrix1, Matrix2, Transpose},
+};
+use rand::{
+    distributions::{Distribution, Uniform},
+    rngs::StdRng,
+    SeedableRng,
+};
 
 #[derive(Debug, PartialEq)]
 pub enum NNError {
@@ -10,52 +17,23 @@ pub enum NNError {
     DataFormatErr,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Activation {
-    Identity,
-    Sigmoid,
-}
-
-impl Activation {
-    /// Returns activation function at x
-    pub fn call(&self, x: f64) -> f64 {
-        match self {
-            Self::Identity => x,
-            Self::Sigmoid => 1.0 / (1.0 + (-x).exp()),
-        }
-    }
-
-    /// Returns derivative of activation function at x
-    pub fn derivative(&self, x: f64) -> f64 {
-        match self {
-            Activation::Identity => 1.0,
-            Self::Sigmoid => {
-                let s_x = self.call(x);
-                s_x * (1.0 - s_x)
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DenseLayer {
+pub struct DenseLayer<'a> {
     weights: Matrix2<f64>,
     biases: Matrix1<f64>,
-    activation: Activation,
+    activation: &'a dyn Activation,
 }
 
-#[derive(Debug, Clone)]
-pub struct NeuralNet {
-    layers: Vec<DenseLayer>,
+pub struct NeuralNet<'a> {
+    layers: Vec<DenseLayer<'a>>,
 }
 
-impl DenseLayer {
+impl<'a> DenseLayer<'a> {
     /// Initializes a layer given the number of inputs and neurons.
-    /// Weights initialized as a random value in [-1.0, 1.0].
+    /// Weights initialized as a random value in [-1.0, 1.0]
     /// Biases initialized as 0.
     /// Activation function is initally the identity (f(x) = x)
     pub fn new(n_inputs: u32, n_neurons: u32) -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = StdRng::seed_from_u64(69);
         let die = Uniform::from(-1.0..=1.0);
 
         let weights = Matrix2::from_vec(
@@ -74,12 +52,12 @@ impl DenseLayer {
         Self {
             weights,
             biases,
-            activation: Activation::Identity,
+            activation: &Activations::Identity,
         }
     }
 
     /// Add an activation function of this layer
-    pub fn with_activation(mut self, activation: Activation) -> Self {
+    pub fn with_activation(mut self, activation: &'a impl Activation) -> Self {
         self.activation = activation;
         self
     }
@@ -90,6 +68,17 @@ impl DenseLayer {
             .dot(&self.weights.transpose())
             .and_then(|m| &m + &self.biases)
         {
+            Ok(mut out) => {
+                out.apply(|x| self.activation.call(x));
+                Ok(out)
+            }
+            Err(_) => Err(NNError::InputErr),
+        }
+    }
+
+    /// Propogates an input through the layer applying the activation function.
+    pub fn forward(&self, input: &Matrix1<f64>) -> Result<Matrix1<f64>, NNError> {
+        match self.weights.dot(input).and_then(|m| &m + &self.biases) {
             Ok(mut out) => {
                 out.apply(|x| self.activation.call(x));
                 Ok(out)
@@ -109,19 +98,34 @@ impl DenseLayer {
     }
 }
 
-impl NeuralNet {
+impl<'a> NeuralNet<'a> {
     /// Creates a 1-layer neural net with some number of neurons
     /// that can accept a certain number of inputs
-    pub fn new(n_inputs: u32, n_neurons: u32, activation: Activation) -> Self {
+    pub fn new(n_inputs: u32, n_neurons: u32, activation: &'a impl Activation) -> Self {
         Self {
             layers: vec![DenseLayer::new(n_inputs, n_neurons).with_activation(activation)],
         }
     }
 
-    pub fn add_layer(&mut self, n_neurons: u32, activation: Activation) {
+    pub fn add_layer(&mut self, n_neurons: u32, activation: &'a impl Activation) {
         let n_inputs = self.layers.last().unwrap().neuron_amount();
         self.layers
             .push(DenseLayer::new(n_inputs, n_neurons).with_activation(activation));
+    }
+
+    pub fn forward(&self, input: &Matrix1<f64>) -> Result<Vec<Matrix1<f64>>, NNError> {
+        // NN has to be initialized with at least one layer
+        let first_layer = self.layers.first().unwrap();
+
+        if input.size() as u32 != first_layer.input_amount() {
+            return Err(NNError::InputErr);
+        }
+
+        let mut outputs = vec![input.clone()];
+        for layer in self.layers.iter() {
+            outputs.push(layer.forward(&outputs[outputs.len() - 1]).unwrap());
+        }
+        Ok(outputs)
     }
 
     /// Propogates a batch of inputs through layers
@@ -129,15 +133,15 @@ impl NeuralNet {
         // NN has to be initialized with at least one layer
         let first_layer = self.layers.first().unwrap();
 
-        if inputs.row_size() as u32 != first_layer.input_amount() {
+        if inputs.cols() as u32 != first_layer.input_amount() {
             return Err(NNError::InputErr);
         }
 
-        let mut next_input = first_layer.run_batch(inputs).unwrap();
+        let mut prev_output = first_layer.run_batch(inputs).unwrap();
         for layer in self.layers.iter().skip(1) {
-            next_input = layer.run_batch(&next_input).unwrap();
+            prev_output = layer.run_batch(&prev_output).unwrap();
         }
-        Ok(next_input)
+        Ok(prev_output)
     }
 
     /// Normalizes an output such that each set of outputs in the batch add to 1.
@@ -173,7 +177,7 @@ impl NeuralNet {
                 diff.iter().sum::<f64>() / diff.size() as f64
             })
             .sum();
-        Ok(sum / targets.column_size() as f64)
+        Ok(sum / targets.rows() as f64)
     }
 
     pub fn train(
@@ -193,8 +197,8 @@ impl NeuralNet {
                 w_grads.push(self.layers[i].weights.clone());
                 b_grads.push(self.layers[i].biases.clone());
 
-                for j in 0..self.layers[i].weights.column_size() {
-                    for k in 0..self.layers[i].weights.row_size() {
+                for j in 0..self.layers[i].weights.rows() {
+                    for k in 0..self.layers[i].weights.cols() {
                         let saved = self.layers[i].weights[j][k];
                         self.layers[i].weights[j][k] += eps;
                         let dw = (&self.mean_squared_error(&inputs, &targets)? - costs) / eps;
@@ -216,6 +220,76 @@ impl NeuralNet {
                 self.layers[i].weights = (&self.layers[i].weights + &w_grads[i]).unwrap();
                 self.layers[i].biases = (&self.layers[i].biases + &b_grads[i]).unwrap();
             }
+        }
+        Ok(())
+    }
+
+    fn backprop_once(
+        &mut self,
+        rate: f64,
+        inputs: &Matrix2<f64>,
+        targets: &Matrix2<f64>,
+    ) -> Result<(), NNError> {
+        let mut w_grads = Vec::new();
+        let mut b_grads = Vec::new();
+
+        // i -- current input sample
+        // l -- current layer
+        // n -- current neuron
+        // p -- previous neuron
+        for (i, input) in inputs.iter().enumerate() {
+            let mut w_grad = vec![Matrix2::<f64>::new(0, 0); self.layers.len()];
+            let mut b_grad = vec![Matrix1::<f64>::new(0); self.layers.len()];
+            let acts = self.forward(input)?;
+            let mut d_acts = vec![Matrix1::new(0); acts.len()];
+
+            d_acts[self.layers.len()] =
+                (&acts[acts.len() - 1] - &targets[i]).map_err(|_| NNError::InputErr)?;
+
+            for (l, layer) in self.layers.iter().enumerate().rev() {
+                d_acts[l] = Matrix1::new(layer.weights.cols());
+                w_grad[l] = Matrix2::new(layer.weights.rows(), layer.weights.cols());
+                b_grad[l] = Matrix1::new(layer.biases.size());
+
+                for n in 0..layer.weights.rows() {
+                    let a = acts[l + 1][n];
+                    let da = d_acts[l + 1][n];
+
+                    let db = 2.0 * da * layer.activation.derivative(a);
+                    b_grad[l][n] += db;
+                    for p in 0..layer.weights.cols() {
+                        w_grad[l][n][p] += db * acts[l][p];
+                        d_acts[l][p] += db * layer.weights[n][p];
+                    }
+                }
+            }
+
+            w_grads.push(w_grad);
+            b_grads.push(b_grad);
+        }
+
+        for i in 0..inputs.rows() {
+            for (l, layer) in self.layers.iter_mut().enumerate() {
+                b_grads[i][l].apply(|x| -rate * x / inputs.rows() as f64);
+                w_grads[i][l].apply(|x| -rate * x / inputs.rows() as f64);
+
+                layer.biases = (&layer.biases + &b_grads[i][l]).map_err(|_| NNError::InputErr)?;
+                layer.weights = (&layer.weights + &w_grads[i][l]).map_err(|_| NNError::InputErr)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn train_backprop(
+        &mut self,
+        iterations: usize,
+        rate: f64,
+        inputs: &Matrix2<f64>,
+        targets: &Matrix2<f64>,
+    ) -> Result<(), NNError> {
+        for _ in 0..iterations {
+            self.backprop_once(rate, inputs, targets)?;
         }
         Ok(())
     }
@@ -249,7 +323,7 @@ mod tests {
 
     #[test]
     fn activation_function() {
-        let net = NeuralNet::new(4, 20, Activation::Sigmoid);
+        let net = NeuralNet::new(4, 20, &Activations::Sigmoid);
 
         let out = net.run_batch(&default_inputs()).unwrap();
 
@@ -262,15 +336,15 @@ mod tests {
     #[test]
     fn train_or() {
         // Train a single neuron to compute OR
-        let mut net = NeuralNet::new(2, 1, Activation::Sigmoid);
+        let mut net = NeuralNet::new(2, 1, &Activations::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0], [1], [1], [1]]).into();
 
         let eps = 10e-4;
-        let rate = 10e-2;
+        let rate = 10e-0;
 
-        assert_eq!(Ok(()), net.train(10000, eps, rate, &inputs, &targets));
+        assert_eq!(Ok(()), net.train(1000, eps, rate, &inputs, &targets));
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
@@ -287,16 +361,20 @@ mod tests {
 
     #[test]
     fn train_xor() {
-        let mut net = NeuralNet::new(2, 2, Activation::Sigmoid);
-        net.add_layer(1, Activation::Sigmoid);
+        let mut net = NeuralNet::new(2, 2, &Activations::Sigmoid);
+        net.add_layer(1, &Activations::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0], [1], [1], [0]]).into();
 
-        let eps = 10e-3;
-        let rate = 10e-1;
+        let rate = 10e-0;
 
-        assert_eq!(Ok(()), net.train(200 * 100, eps, rate, &inputs, &targets));
+        let t = std::time::SystemTime::now();
+        assert_eq!(Ok(()), net.train_backprop(1_0_000, rate, &inputs, &targets));
+        println!(
+            "Duration: {:?}",
+            std::time::SystemTime::now().duration_since(t).unwrap()
+        );
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
@@ -313,16 +391,16 @@ mod tests {
 
     #[test]
     fn train_multi_in_multi_out() {
-        let mut net = NeuralNet::new(2, 2, Activation::Sigmoid);
-        net.add_layer(2, Activation::Sigmoid);
+        let mut net = NeuralNet::new(2, 2, &Activations::Sigmoid);
+        net.add_layer(2, &Activations::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0, 0], [1, 0], [1, 0], [0, 1]]).into();
 
         let eps = 10e-2;
-        let rate = 10e-2;
+        let rate = 10e-0;
 
-        assert_eq!(Ok(()), net.train(100 * 1000, eps, rate, &inputs, &targets));
+        assert_eq!(Ok(()), net.train(100, eps, rate, &inputs, &targets));
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
@@ -339,9 +417,10 @@ mod tests {
 
     #[test]
     fn train_adder() {
-        let mut net = NeuralNet::new(4, 4, Activation::Sigmoid);
-        net.add_layer(5, Activation::Sigmoid);
-        net.add_layer(3, Activation::Sigmoid);
+        let mut net = NeuralNet::new(4, 4, &Activations::Sigmoid);
+        net.add_layer(10, &Activations::Sigmoid);
+        net.add_layer(10, &Activations::Sigmoid);
+        net.add_layer(3, &Activations::Sigmoid);
 
         let mut inputs = Vec::new();
         let mut targets = Vec::new();
@@ -353,15 +432,15 @@ mod tests {
             }
         }
 
-        println!("{:?}\n{:?}", inputs, targets);
-
         let inputs = Matrix2::from_vec(inputs).unwrap().into();
         let targets = Matrix2::from_vec(targets).unwrap().into();
 
-        let eps = 10e-1;
-        let rate = 10e-1;
+        let rate = 10e-0;
 
-        assert_eq!(Ok(()), net.train(100 * 100, eps, rate, &inputs, &targets));
+        assert_eq!(
+            Ok(()),
+            net.train_backprop(100 * 100, rate, &inputs, &targets)
+        );
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
