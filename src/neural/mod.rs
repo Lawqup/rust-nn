@@ -1,14 +1,12 @@
+pub mod activations;
+pub mod optimizer;
+
 use std::fmt::Debug;
 
-use crate::{
-    activations::{Activation, Activations},
-    matrix::{Dot, Matrix1, Matrix2, Transpose},
-};
-use rand::{
-    distributions::{Distribution, Uniform},
-    rngs::StdRng,
-    SeedableRng,
-};
+use crate::matrix::{Dot, Matrix1, Matrix2, Transpose};
+use rand::distributions::{Distribution, Uniform};
+
+use self::activations::{Activation, Activations};
 
 #[derive(Debug, PartialEq)]
 pub enum NNError {
@@ -33,7 +31,7 @@ impl<'a> DenseLayer<'a> {
     /// Biases initialized as 0.
     /// Activation function is initally the identity (f(x) = x)
     pub fn new(n_inputs: u32, n_neurons: u32) -> Self {
-        let mut rng = StdRng::seed_from_u64(69);
+        let mut rng = rand::thread_rng();
         let die = Uniform::from(-1.0..=1.0);
 
         let weights = Matrix2::from_vec(
@@ -179,124 +177,12 @@ impl<'a> NeuralNet<'a> {
             .sum();
         Ok(sum / targets.rows() as f64)
     }
-
-    pub fn train(
-        &mut self,
-        iterations: usize,
-        eps: f64,
-        rate: f64,
-        inputs: &Matrix2<f64>,
-        targets: &Matrix2<f64>,
-    ) -> Result<(), NNError> {
-        for _ in 0..iterations {
-            let mut w_grads = Vec::new();
-            let mut b_grads = Vec::new();
-
-            let costs = &self.mean_squared_error(&inputs, &targets)?;
-            for i in 0..self.layers.len() {
-                w_grads.push(self.layers[i].weights.clone());
-                b_grads.push(self.layers[i].biases.clone());
-
-                for j in 0..self.layers[i].weights.rows() {
-                    for k in 0..self.layers[i].weights.cols() {
-                        let saved = self.layers[i].weights[j][k];
-                        self.layers[i].weights[j][k] += eps;
-                        let dw = (&self.mean_squared_error(&inputs, &targets)? - costs) / eps;
-
-                        self.layers[i].weights[j][k] = saved;
-                        w_grads[i][j][k] = -rate * dw;
-                    }
-
-                    let saved = self.layers[i].biases[j];
-                    self.layers[i].biases[j] += eps;
-                    let db = (&self.mean_squared_error(&inputs, &targets)? - costs) / eps;
-
-                    self.layers[i].biases[j] = saved;
-                    b_grads[i][j] = -rate * db;
-                }
-            }
-
-            for i in 0..w_grads.len() {
-                self.layers[i].weights = (&self.layers[i].weights + &w_grads[i]).unwrap();
-                self.layers[i].biases = (&self.layers[i].biases + &b_grads[i]).unwrap();
-            }
-        }
-        Ok(())
-    }
-
-    fn backprop_once(
-        &mut self,
-        rate: f64,
-        inputs: &Matrix2<f64>,
-        targets: &Matrix2<f64>,
-    ) -> Result<(), NNError> {
-        let mut w_grads = Vec::new();
-        let mut b_grads = Vec::new();
-
-        // i -- current input sample
-        // l -- current layer
-        // n -- current neuron
-        // p -- previous neuron
-        for (i, input) in inputs.iter().enumerate() {
-            let mut w_grad = vec![Matrix2::<f64>::new(0, 0); self.layers.len()];
-            let mut b_grad = vec![Matrix1::<f64>::new(0); self.layers.len()];
-            let acts = self.forward(input)?;
-            let mut d_acts = vec![Matrix1::new(0); acts.len()];
-
-            d_acts[self.layers.len()] =
-                (&acts[acts.len() - 1] - &targets[i]).map_err(|_| NNError::InputErr)?;
-
-            for (l, layer) in self.layers.iter().enumerate().rev() {
-                d_acts[l] = Matrix1::new(layer.weights.cols());
-                w_grad[l] = Matrix2::new(layer.weights.rows(), layer.weights.cols());
-                b_grad[l] = Matrix1::new(layer.biases.size());
-
-                for n in 0..layer.weights.rows() {
-                    let a = acts[l + 1][n];
-                    let da = d_acts[l + 1][n];
-
-                    let db = 2.0 * da * layer.activation.derivative(a);
-                    b_grad[l][n] += db;
-                    for p in 0..layer.weights.cols() {
-                        w_grad[l][n][p] += db * acts[l][p];
-                        d_acts[l][p] += db * layer.weights[n][p];
-                    }
-                }
-            }
-
-            w_grads.push(w_grad);
-            b_grads.push(b_grad);
-        }
-
-        for i in 0..inputs.rows() {
-            for (l, layer) in self.layers.iter_mut().enumerate() {
-                b_grads[i][l].apply(|x| -rate * x / inputs.rows() as f64);
-                w_grads[i][l].apply(|x| -rate * x / inputs.rows() as f64);
-
-                layer.biases = (&layer.biases + &b_grads[i][l]).map_err(|_| NNError::InputErr)?;
-                layer.weights = (&layer.weights + &w_grads[i][l]).map_err(|_| NNError::InputErr)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn train_backprop(
-        &mut self,
-        iterations: usize,
-        rate: f64,
-        inputs: &Matrix2<f64>,
-        targets: &Matrix2<f64>,
-    ) -> Result<(), NNError> {
-        for _ in 0..iterations {
-            self.backprop_once(rate, inputs, targets)?;
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::neural::optimizer::{Optimizer, OptimizerMethod};
+
     use super::*;
 
     fn default_inputs() -> Matrix2<f64> {
@@ -341,10 +227,10 @@ mod tests {
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0], [1], [1], [1]]).into();
 
-        let eps = 10e-4;
         let rate = 10e-0;
 
-        assert_eq!(Ok(()), net.train(1000, eps, rate, &inputs, &targets));
+        let optim = Optimizer::new(OptimizerMethod::Backprop, 1_000, rate);
+        assert_eq!(Ok(()), optim.train(&mut net, &inputs, &targets));
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
@@ -361,7 +247,7 @@ mod tests {
 
     #[test]
     fn train_xor() {
-        let mut net = NeuralNet::new(2, 2, &Activations::Sigmoid);
+        let mut net = NeuralNet::new(2, 2, &Activations::Arctan);
         net.add_layer(1, &Activations::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
@@ -369,12 +255,8 @@ mod tests {
 
         let rate = 10e-0;
 
-        let t = std::time::SystemTime::now();
-        assert_eq!(Ok(()), net.train_backprop(1_0_000, rate, &inputs, &targets));
-        println!(
-            "Duration: {:?}",
-            std::time::SystemTime::now().duration_since(t).unwrap()
-        );
+        let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate).with_log(Some(1_000));
+        assert_eq!(Ok(()), optim.train(&mut net, &inputs, &targets));
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
@@ -397,10 +279,10 @@ mod tests {
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0, 0], [1, 0], [1, 0], [0, 1]]).into();
 
-        let eps = 10e-2;
-        let rate = 10e-0;
+        let rate = 10e-3;
 
-        assert_eq!(Ok(()), net.train(100, eps, rate, &inputs, &targets));
+        let optim = Optimizer::new(OptimizerMethod::Backprop, 100_000, rate).with_log(Some(5_000));
+        assert_eq!(Ok(()), optim.train(&mut net, &inputs, &targets));
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
 
@@ -417,39 +299,59 @@ mod tests {
 
     #[test]
     fn train_adder() {
-        let mut net = NeuralNet::new(4, 4, &Activations::Sigmoid);
-        net.add_layer(10, &Activations::Sigmoid);
-        net.add_layer(10, &Activations::Sigmoid);
-        net.add_layer(3, &Activations::Sigmoid);
+        const BITS: u32 = 3; // Number of bits per number to add
+        let mut net = NeuralNet::new(2 * BITS, 4, &Activations::Sigmoid);
+        net.add_layer(2 * BITS + 1, &Activations::Sigmoid);
+        net.add_layer(BITS + 1, &Activations::Sigmoid);
 
-        let mut inputs = Vec::new();
-        let mut targets = Vec::new();
+        let mut train_inputs = Vec::new();
+        let mut train_targets = Vec::new();
 
-        for i in 0..4 {
-            for j in 0..4 {
-                inputs.push(vec![i / 2, i % 2, j / 2, j % 2]);
-                targets.push(vec![(i + j) / 4, ((i + j) / 2) % 2, (i + j) % 2])
+        fn to_bitvec(x: i32, size: u32) -> Vec<i32> {
+            (0..size).map(|i| x >> i & 1).collect()
+        }
+        for i in 0..1 << BITS {
+            for j in 0..1 << BITS {
+                train_inputs.push([to_bitvec(i, BITS), to_bitvec(j, BITS)].concat());
+                train_targets.push(to_bitvec(i + j, BITS + 1))
             }
         }
 
-        let inputs = Matrix2::from_vec(inputs).unwrap().into();
-        let targets = Matrix2::from_vec(targets).unwrap().into();
+        let train_inputs = Matrix2::from_vec(train_inputs).unwrap().into();
+        let train_targets = Matrix2::from_vec(train_targets).unwrap().into();
 
-        let rate = 10e-0;
+        let rate = 1.0;
 
-        assert_eq!(
-            Ok(()),
-            net.train_backprop(100 * 100, rate, &inputs, &targets)
-        );
-
-        let fin = net.mean_squared_error(&inputs, &targets).unwrap();
+        let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate).with_log(Some(5_000));
+        assert_eq!(Ok(()), optim.train(&mut net, &train_inputs, &train_targets));
 
         println!("------------------");
-        println!("Final cost: {fin}");
+        println!(
+            "Final training cost: {}",
+            net.mean_squared_error(&train_inputs, &train_targets)
+                .unwrap()
+        );
 
-        let res = net.run_batch(&inputs).unwrap();
-        for (inp, out) in inputs.iter().zip(res) {
-            println!("{:?} -> {:?}", inp.as_vec(), out.as_vec())
+        let res = net.run_batch(&train_inputs).unwrap();
+
+        fn from_bits(bv: Vec<f64>) -> usize {
+            bv.into_iter()
+                .enumerate()
+                .fold(0, |acc, (idx, v)| acc + ((v.round() as usize) << idx))
         }
+        let mut correct = 0.0;
+        let inps = train_inputs.rows();
+        for (idx, mut i) in train_inputs.into_iter().map(|i| i.to_vec()).enumerate() {
+            let y = from_bits(res[idx].as_vec().clone());
+            let j = from_bits(i.split_off(BITS as usize));
+            let i = from_bits(i);
+            if i + j != y {
+                println!("{i}+{j} != {y}",);
+            } else {
+                correct += 1.0;
+            }
+        }
+
+        println!("Accuracy = {}", correct / inps as f64);
     }
 }

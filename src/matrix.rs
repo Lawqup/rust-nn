@@ -287,17 +287,15 @@ impl<T> Matrix2<T> {
 
 impl<T: Default + Copy> Transpose for Matrix2<T> {
     fn transpose(&self) -> Self {
-        let mut transposed = (0..self.dim.1)
-            .map(|_| (0..self.dim.0).map(|_| T::default()).collect::<Vec<_>>())
-            .collect::<Vec<_>>();
+        let mut transposed = Matrix2::new(self.cols(), self.rows());
 
         for ri in 0..self.dim.0 {
-            for ci in 0..self.dim.1 {
-                transposed[ci][ri] = self[ri][ci];
+            for (ci, transp) in transposed.iter_mut().enumerate() {
+                transp[ri] = self[ri][ci];
             }
         }
 
-        Self::from_vec(transposed).unwrap()
+        transposed
     }
 }
 
@@ -373,7 +371,7 @@ impl<T> Matrix1<T> {
     /// Applies a function to every element of the matrix
     pub fn apply<F: Fn(T) -> T>(&mut self, f: F) {
         let data = std::mem::take(&mut self.data);
-        self.data = data.into_iter().map(|x| f(x)).collect();
+        self.data = data.into_iter().map(f).collect();
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, T> {
@@ -423,13 +421,13 @@ impl<'a, T> IntoIterator for &'a mut Matrix1<T> {
 
 impl From<Matrix1<i32>> for Matrix1<f64> {
     fn from(value: Matrix1<i32>) -> Self {
-        return Matrix1::from_vec(value.into_iter().map(|v| *v as f64).collect());
+        Matrix1::from_vec(value.into_iter().map(|v| *v as f64).collect())
     }
 }
 
 impl From<Matrix2<i32>> for Matrix2<f64> {
     fn from(value: Matrix2<i32>) -> Self {
-        return Matrix2::from_vec(
+        Matrix2::from_vec(
             value
                 .into_iter()
                 .map(|v| {
@@ -438,7 +436,7 @@ impl From<Matrix2<i32>> for Matrix2<f64> {
                 })
                 .collect(),
         )
-        .unwrap();
+        .unwrap()
     }
 }
 
