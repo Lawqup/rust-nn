@@ -1,7 +1,10 @@
+use std::sync::mpsc::{self};
+
 use crate::{
     matrix::{Matrix1, Matrix2},
     neural::NeuralNet,
     prelude::*,
+    viz::App,
 };
 
 pub enum OptimizerMethod {
@@ -14,6 +17,7 @@ pub struct Optimizer {
     method: OptimizerMethod,
     iterations: usize,
     iterations_per_log: Option<usize>,
+    gui: bool,
     rate: f64,
 }
 
@@ -23,10 +27,15 @@ impl Optimizer {
             method,
             iterations,
             iterations_per_log: None,
+            gui: false,
             rate,
         }
     }
 
+    pub fn toggle_gui(mut self) -> Self {
+        self.gui = !self.gui;
+        self
+    }
     pub fn with_log(mut self, iterations_per_log: Option<usize>) -> Self {
         self.iterations_per_log = iterations_per_log;
         self
@@ -54,22 +63,47 @@ impl Optimizer {
                 OptimizerMethod::Backprop => self.backprop_once(net, inputs, targets)?,
             }
             if self.iterations_per_log.is_some_and(|ipl| i % ipl == 0) {
-                println!(
-                    "Iteration {i} error: {}",
-                    net.mean_squared_error(inputs, targets)?
-                )
+                let mse = net.mean_squared_error(inputs, targets)?;
+                println!("Iteration {i} error: {mse}")
             }
         }
         Ok(())
     }
 
-    // pub fn train_gui(
-    //     &self,
-    //     net: &mut NeuralNet,
-    //     inputs: &Matrix2<f64>,
-    //     targets: &Matrix2<f64>,
-    // ) -> Result<()> {
-    // }
+    pub fn train_gui(
+        &self,
+        net: &mut NeuralNet,
+        inputs: &Matrix2<f64>,
+        targets: &Matrix2<f64>,
+    ) -> Result<()> {
+        std::thread::scope(|scope| -> Result<()> {
+            let (tx, rx) = mpsc::channel();
+            let handle = scope.spawn(move || -> Result<()> {
+                for i in 0..self.iterations {
+                    match self.method {
+                        OptimizerMethod::FiniteDiff(eps) => {
+                            self.finite_diff_once(net, eps, inputs, targets)?
+                        }
+                        OptimizerMethod::Backprop => self.backprop_once(net, inputs, targets)?,
+                    }
+                    if self.iterations_per_log.is_some_and(|ipl| i % ipl == 0) {
+                        let mse = net.mean_squared_error(inputs, targets)?;
+                        tx.send([i as f64, mse]).map_err(|_| Error::ThreadErr)?;
+                    }
+                }
+                Ok(())
+            });
+
+            let _ = eframe::run_native(
+                "RustNN",
+                eframe::NativeOptions::default(),
+                Box::new(|cc| Box::new(App::new(cc, rx))),
+            );
+
+            handle.join().map_err(|_| Error::ThreadErr)??;
+            Ok(())
+        })
+    }
 
     fn finite_diff_once(
         &self,

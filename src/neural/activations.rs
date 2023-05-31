@@ -1,4 +1,4 @@
-pub trait Activation {
+pub trait Activation: Send + Sync {
     /// Returns activation function at x
     fn call(&self, x: f64) -> f64;
     /// Returns derivative of activation function with respect to the function at x.
