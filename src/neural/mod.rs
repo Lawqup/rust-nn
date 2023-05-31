@@ -1,19 +1,13 @@
 pub mod activations;
 pub mod optimizer;
 
-use std::{fmt::Debug, ops::RangeInclusive};
+use crate::prelude::*;
+use std::ops::RangeInclusive;
 
 use crate::matrix::{Dot, Matrix1, Matrix2, Transpose};
 use rand::distributions::{Distribution, Uniform};
 
 use self::activations::{Activation, Activations};
-
-#[derive(Debug, PartialEq)]
-pub enum NNError {
-    /// Indicated input dimensions are incompatible
-    InputErr,
-    DataFormatErr,
-}
 
 #[derive(Clone)]
 pub struct DenseLayer<'a> {
@@ -61,7 +55,7 @@ impl<'a> DenseLayer<'a> {
     }
 
     /// Propogates a batch of inputs through the layer applying the activation function.
-    pub fn run_batch(&self, input: &Matrix2<f64>) -> Result<Matrix2<f64>, NNError> {
+    pub fn run_batch(&self, input: &Matrix2<f64>) -> Result<Matrix2<f64>> {
         match input
             .dot(&self.weights.transpose())
             .and_then(|m| &m + &self.biases)
@@ -70,18 +64,18 @@ impl<'a> DenseLayer<'a> {
                 out.apply(|x| self.activation.call(x));
                 Ok(out)
             }
-            Err(_) => Err(NNError::InputErr),
+            Err(_) => Err(Error::DimensionErr),
         }
     }
 
     /// Propogates an input through the layer applying the activation function.
-    pub fn forward(&self, input: &Matrix1<f64>) -> Result<Matrix1<f64>, NNError> {
+    pub fn forward(&self, input: &Matrix1<f64>) -> Result<Matrix1<f64>> {
         match self.weights.dot(input).and_then(|m| &m + &self.biases) {
             Ok(mut out) => {
                 out.apply(|x| self.activation.call(x));
                 Ok(out)
             }
-            Err(_) => Err(NNError::InputErr),
+            Err(_) => Err(Error::DimensionErr),
         }
     }
 
@@ -115,17 +109,27 @@ impl<'a> NeuralNet<'a> {
 
     /// Reset parameters to uniformly random values between a specified range
     pub fn randomize(&mut self, r: RangeInclusive<f64>) {
+        let mut rng = rand::thread_rng();
+        let die = Uniform::from(r);
+
         for layer in self.layers.iter_mut() {
-            *layer = DenseLayer::new(layer.input_amount(), layer.neuron_amount(), r.clone());
+            for b in &mut layer.biases {
+                *b = die.sample(&mut rng);
+            }
+            for row in &mut layer.weights {
+                for w in row {
+                    *w = die.sample(&mut rng);
+                }
+            }
         }
     }
 
-    pub fn forward(&self, input: &Matrix1<f64>) -> Result<Vec<Matrix1<f64>>, NNError> {
+    pub fn forward(&self, input: &Matrix1<f64>) -> Result<Vec<Matrix1<f64>>> {
         // NN has to be initialized with at least one layer
         let first_layer = self.layers.first().unwrap();
 
         if input.size() as u32 != first_layer.input_amount() {
-            return Err(NNError::InputErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut outputs = vec![input.clone()];
@@ -136,12 +140,12 @@ impl<'a> NeuralNet<'a> {
     }
 
     /// Propogates a batch of inputs through layers
-    pub fn run_batch(&self, inputs: &Matrix2<f64>) -> Result<Matrix2<f64>, NNError> {
+    pub fn run_batch(&self, inputs: &Matrix2<f64>) -> Result<Matrix2<f64>> {
         // NN has to be initialized with at least one layer
         let first_layer = self.layers.first().unwrap();
 
         if inputs.cols() as u32 != first_layer.input_amount() {
-            return Err(NNError::InputErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut prev_output = first_layer.run_batch(inputs).unwrap();
@@ -164,15 +168,11 @@ impl<'a> NeuralNet<'a> {
     }
 
     /// Mean-squared error
-    pub fn mean_squared_error(
-        &self,
-        inputs: &Matrix2<f64>,
-        targets: &Matrix2<f64>,
-    ) -> Result<f64, NNError> {
+    pub fn mean_squared_error(&self, inputs: &Matrix2<f64>, targets: &Matrix2<f64>) -> Result<f64> {
         // Prediction rows must match class target size
         let outputs = self.run_batch(inputs)?;
         if outputs.dim() != targets.dim() {
-            return Err(NNError::InputErr);
+            return Err(Error::DimensionErr);
         }
 
         let sum: f64 = outputs

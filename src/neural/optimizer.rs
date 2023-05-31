@@ -1,6 +1,7 @@
 use crate::{
     matrix::{Matrix1, Matrix2},
-    neural::{NNError, NeuralNet},
+    neural::NeuralNet,
+    prelude::*,
 };
 
 pub enum OptimizerMethod {
@@ -44,7 +45,7 @@ impl Optimizer {
         net: &mut NeuralNet,
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
-    ) -> Result<(), NNError> {
+    ) -> Result<()> {
         for i in 0..self.iterations {
             match self.method {
                 OptimizerMethod::FiniteDiff(eps) => {
@@ -62,13 +63,21 @@ impl Optimizer {
         Ok(())
     }
 
+    // pub fn train_gui(
+    //     &self,
+    //     net: &mut NeuralNet,
+    //     inputs: &Matrix2<f64>,
+    //     targets: &Matrix2<f64>,
+    // ) -> Result<()> {
+    // }
+
     fn finite_diff_once(
         &self,
         net: &mut NeuralNet,
         eps: f64,
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
-    ) -> Result<(), NNError> {
+    ) -> Result<()> {
         let mut w_grads = Vec::new();
         let mut b_grads = Vec::new();
 
@@ -108,7 +117,7 @@ impl Optimizer {
         net: &mut NeuralNet,
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
-    ) -> Result<(), NNError> {
+    ) -> Result<()> {
         let mut w_grads = Vec::new();
         let mut b_grads = Vec::new();
 
@@ -123,8 +132,7 @@ impl Optimizer {
             let acts = net.forward(input)?;
             let mut d_acts = vec![Matrix1::new(0); acts.len()];
 
-            d_acts[net.layers.len()] =
-                (&acts[acts.len() - 1] - &targets[i]).map_err(|_| NNError::InputErr)?;
+            d_acts[net.layers.len()] = (&acts[acts.len() - 1] - &targets[i])?;
 
             for (l, layer) in net.layers.iter().enumerate().rev() {
                 d_acts[l] = Matrix1::new(layer.weights.cols());
@@ -150,8 +158,8 @@ impl Optimizer {
                 b_grads[i][l].apply(|x| -self.rate * x / inputs.rows() as f64);
                 w_grads[i][l].apply(|x| -self.rate * x / inputs.rows() as f64);
 
-                layer.biases = (&layer.biases + &b_grads[i][l]).map_err(|_| NNError::InputErr)?;
-                layer.weights = (&layer.weights + &w_grads[i][l]).map_err(|_| NNError::InputErr)?;
+                layer.biases = (&layer.biases + &b_grads[i][l])?;
+                layer.weights = (&layer.weights + &w_grads[i][l])?;
             }
         }
 

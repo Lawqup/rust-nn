@@ -1,3 +1,4 @@
+use crate::prelude::*;
 use std::ops::{Add, AddAssign, Index, IndexMut, Mul, Sub};
 
 #[derive(Debug, PartialEq, Clone)]
@@ -12,17 +13,9 @@ pub struct Matrix1<T> {
     dim: usize,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum MatrixError {
-    /// Indicates some dimension is incorrect in a Matrix operation.
-    DimensionErr,
-    /// Indicates a matrix made from a vec has an unsuitable shape.
-    InitErr,
-}
-
 pub trait Dot<I> {
     type Output;
-    fn dot(self, rhs: I) -> Result<Self::Output, MatrixError>;
+    fn dot(self, rhs: I) -> Result<Self::Output>;
 }
 
 pub trait Transpose {
@@ -34,10 +27,10 @@ where
     T: Mul<Output = T> + Default + AddAssign + Copy,
 {
     type Output = Matrix1<T>;
-    fn dot(self, rhs: &Matrix1<T>) -> Result<Self::Output, MatrixError> {
+    fn dot(self, rhs: &Matrix1<T>) -> Result<Self::Output> {
         // columns of LHS == rows of RHS
         if self.dim.1 != rhs.size() {
-            return Err(MatrixError::DimensionErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut data = Vec::new();
@@ -55,10 +48,10 @@ where
     T: Mul<Output = T> + Default + AddAssign + Copy,
 {
     type Output = Matrix2<T>;
-    fn dot(self, rhs: &Matrix2<T>) -> Result<Self::Output, MatrixError> {
+    fn dot(self, rhs: &Matrix2<T>) -> Result<Self::Output> {
         // columns of LHS == rows of RHS
         if self.dim.1 != rhs.dim.0 {
-            return Err(MatrixError::DimensionErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut data = Vec::new();
@@ -80,10 +73,10 @@ where
     T: Mul<Output = T> + Default + AddAssign + Copy,
 {
     type Output = T;
-    fn dot(self, rhs: &Matrix1<T>) -> Result<Self::Output, MatrixError> {
+    fn dot(self, rhs: &Matrix1<T>) -> Result<Self::Output> {
         // columns of LHS == rows of RHS
         if self.dim != rhs.size() {
-            return Err(MatrixError::DimensionErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut sum = T::default();
@@ -100,10 +93,10 @@ impl<'a, T> Add for &'a Matrix1<T>
 where
     &'a T: Add<Output = T>,
 {
-    type Output = Result<Matrix1<T>, MatrixError>;
+    type Output = Result<Matrix1<T>>;
     fn add(self, rhs: Self) -> Self::Output {
         if self.dim != rhs.dim {
-            return Err(MatrixError::DimensionErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut res = Vec::new();
@@ -120,10 +113,10 @@ impl<'a, T> Sub for &'a Matrix1<T>
 where
     &'a T: Sub<Output = T>,
 {
-    type Output = Result<Matrix1<T>, MatrixError>;
+    type Output = Result<Matrix1<T>>;
     fn sub(self, rhs: Self) -> Self::Output {
         if self.dim != rhs.dim {
-            return Err(MatrixError::DimensionErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut res = Vec::new();
@@ -140,10 +133,10 @@ impl<T> Sub for Matrix1<T>
 where
     T: Sub<Output = T> + Copy,
 {
-    type Output = Result<Matrix1<T>, MatrixError>;
+    type Output = Result<Matrix1<T>>;
     fn sub(self, rhs: Self) -> Self::Output {
         if self.dim != rhs.dim {
-            return Err(MatrixError::DimensionErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut res = Vec::new();
@@ -160,10 +153,10 @@ impl<'a, T> Add for &'a Matrix2<T>
 where
     &'a T: Add<Output = T>,
 {
-    type Output = Result<Matrix2<T>, MatrixError>;
+    type Output = Result<Matrix2<T>>;
     fn add(self, rhs: Self) -> Self::Output {
         if self.dim != rhs.dim {
-            return Err(MatrixError::DimensionErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut res = Vec::new();
@@ -180,11 +173,11 @@ impl<'a, T> Add<&'a Matrix1<T>> for &'a Matrix2<T>
 where
     &'a T: Add<Output = T>,
 {
-    type Output = Result<Matrix2<T>, MatrixError>;
+    type Output = Result<Matrix2<T>>;
     fn add(self, rhs: &'a Matrix1<T>) -> Self::Output {
         // Row lengths must match
         if self.dim.1 != rhs.dim {
-            return Err(MatrixError::DimensionErr);
+            return Err(Error::DimensionErr);
         }
 
         let mut res = Vec::new();
@@ -234,7 +227,7 @@ impl<T> Matrix2<T> {
         self.dim.1
     }
 
-    pub fn from_vec(vec: Vec<Vec<T>>) -> Result<Self, MatrixError> {
+    pub fn from_vec(vec: Vec<Vec<T>>) -> Result<Self> {
         let mut data = Vec::new();
 
         let mut cols = None;
@@ -242,7 +235,7 @@ impl<T> Matrix2<T> {
 
         for row in vec {
             if cols.is_some() && cols.unwrap() != row.len() {
-                return Err(MatrixError::InitErr);
+                return Err(Error::DimensionErr);
             }
 
             cols = Some(row.len());
@@ -489,14 +482,14 @@ mod tests {
     fn matrix1_dot_err() {
         let vec1 = Matrix1::from_array([3.0, 4.5, 1.2, 2.0]);
         let vec2 = Matrix1::from_array([1.0, 2.0, 4.0]);
-        assert_eq!(vec1.dot(&vec2), Err(MatrixError::DimensionErr));
+        assert_eq!(vec1.dot(&vec2), Err(Error::DimensionErr));
     }
 
     #[test]
     fn matrix2_dot_err() {
         let matrix = Matrix2::from_array([[1, 2], [2, 2], [4, 8]]);
         let vec = Matrix1::from_array([1]);
-        assert_eq!(matrix.dot(&vec), Err(MatrixError::DimensionErr));
+        assert_eq!(matrix.dot(&vec), Err(Error::DimensionErr));
     }
 
     #[test]
@@ -537,7 +530,7 @@ mod tests {
         let vec1 = Matrix1::from_array([3.0, 4.5, 1.2, 2.0]);
         let vec2 = Matrix1::from_array([1.0, 2.0, 4.0]);
         let vec3 = &vec1 + &vec2;
-        assert_eq!(vec3, Err(MatrixError::DimensionErr));
+        assert_eq!(vec3, Err(Error::DimensionErr));
     }
 
     #[test]
@@ -556,12 +549,12 @@ mod tests {
         let vec = vec![vec![1, 2, 3], vec![4, 5, 9], vec![1, 2]];
         let matrix = Matrix2::from_vec(vec);
 
-        assert_eq!(matrix, Err(MatrixError::InitErr));
+        assert_eq!(matrix, Err(Error::DimensionErr));
 
         let vec = vec![vec![1, 2], vec![4, 5, 9], vec![1, 2, 2]];
         let matrix = Matrix2::from_vec(vec);
 
-        assert_eq!(matrix, Err(MatrixError::InitErr));
+        assert_eq!(matrix, Err(Error::DimensionErr));
     }
 
     #[test]
@@ -621,7 +614,7 @@ mod tests {
         let m2 = Matrix2::from_array([[1, 2], [3, 4]]);
 
         let m3 = m1.dot(&m2);
-        assert_eq!(m3, Err(MatrixError::DimensionErr));
+        assert_eq!(m3, Err(Error::DimensionErr));
     }
 
     #[test]
@@ -640,14 +633,14 @@ mod tests {
         let m2 = Matrix2::from_array([[1, 2], [3, 4]]);
 
         let m3 = &m1 + &m2;
-        assert_eq!(m3, Err(MatrixError::DimensionErr));
+        assert_eq!(m3, Err(Error::DimensionErr));
 
         // unequal cols
         let m1 = Matrix2::from_array([[1, 2], [3, 4], [5, 6]]).transpose();
         let m2 = Matrix2::from_array([[1, 2, 1], [3, 4, 1], [1, 2, 3]]);
 
         let m3 = &m1 + &m2;
-        assert_eq!(m3, Err(MatrixError::DimensionErr));
+        assert_eq!(m3, Err(Error::DimensionErr));
     }
 
     #[test]
@@ -661,7 +654,7 @@ mod tests {
         let vec = Matrix1::from_array([1]);
 
         let m3 = &matrix + &vec;
-        assert_eq!(m3, Err(MatrixError::DimensionErr));
+        assert_eq!(m3, Err(Error::DimensionErr));
     }
 
     #[test]
