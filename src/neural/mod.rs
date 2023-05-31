@@ -1,7 +1,7 @@
 pub mod activations;
 pub mod optimizer;
 
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::RangeInclusive};
 
 use crate::matrix::{Dot, Matrix1, Matrix2, Transpose};
 use rand::distributions::{Distribution, Uniform};
@@ -15,6 +15,7 @@ pub enum NNError {
     DataFormatErr,
 }
 
+#[derive(Clone)]
 pub struct DenseLayer<'a> {
     weights: Matrix2<f64>,
     biases: Matrix1<f64>,
@@ -27,12 +28,11 @@ pub struct NeuralNet<'a> {
 
 impl<'a> DenseLayer<'a> {
     /// Initializes a layer given the number of inputs and neurons.
-    /// Weights initialized as a random value in [-1.0, 1.0]
-    /// Biases initialized as 0.
+    /// Params initialized as a random value in init_range
     /// Activation function is initally the identity (f(x) = x)
-    pub fn new(n_inputs: u32, n_neurons: u32) -> Self {
+    pub fn new(n_inputs: u32, n_neurons: u32, init_range: RangeInclusive<f64>) -> Self {
         let mut rng = rand::thread_rng();
-        let die = Uniform::from(-1.0..=1.0);
+        let die = Uniform::from(init_range);
 
         let weights = Matrix2::from_vec(
             (0..n_neurons)
@@ -45,7 +45,7 @@ impl<'a> DenseLayer<'a> {
         )
         .unwrap();
 
-        let biases = Matrix1::from_vec((0..n_neurons).map(|_| 0.0).collect());
+        let biases = Matrix1::from_vec((0..n_neurons).map(|_| die.sample(&mut rng)).collect());
 
         Self {
             weights,
@@ -101,14 +101,23 @@ impl<'a> NeuralNet<'a> {
     /// that can accept a certain number of inputs
     pub fn new(n_inputs: u32, n_neurons: u32, activation: &'a impl Activation) -> Self {
         Self {
-            layers: vec![DenseLayer::new(n_inputs, n_neurons).with_activation(activation)],
+            layers: vec![
+                DenseLayer::new(n_inputs, n_neurons, -1.0..=1.0).with_activation(activation)
+            ],
         }
     }
 
     pub fn add_layer(&mut self, n_neurons: u32, activation: &'a impl Activation) {
         let n_inputs = self.layers.last().unwrap().neuron_amount();
         self.layers
-            .push(DenseLayer::new(n_inputs, n_neurons).with_activation(activation));
+            .push(DenseLayer::new(n_inputs, n_neurons, -1.0..=1.0).with_activation(activation));
+    }
+
+    /// Reset parameters to uniformly random values between a specified range
+    pub fn randomize(&mut self, r: RangeInclusive<f64>) {
+        for layer in self.layers.iter_mut() {
+            *layer = DenseLayer::new(layer.input_amount(), layer.neuron_amount(), r.clone());
+        }
     }
 
     pub fn forward(&self, input: &Matrix1<f64>) -> Result<Vec<Matrix1<f64>>, NNError> {
@@ -196,8 +205,8 @@ mod tests {
 
     #[test]
     fn dense_layer() {
-        let layer1 = DenseLayer::new(4, 2);
-        let layer2 = DenseLayer::new(2, 1);
+        let layer1 = DenseLayer::new(4, 2, -1.0..=1.0);
+        let layer2 = DenseLayer::new(2, 1, -3.0..=5.0);
 
         let layer1_out = layer1.run_batch(&default_inputs()).unwrap();
 
@@ -217,6 +226,35 @@ mod tests {
         assert!(out
             .into_iter()
             .all(|row| row.into_iter().all(|&x| x < 1.0 && x > 0.0)));
+    }
+
+    #[test]
+    fn randomize() {
+        let mut net = NeuralNet::new(4, 20, &Activations::Sigmoid);
+
+        for layer in net.layers.iter() {
+            for &b in &layer.biases {
+                assert!(-1.0 <= b && b <= 1.0);
+            }
+            for row in &layer.weights {
+                for &w in row {
+                    assert!(-1.0 <= w && w <= 1.0);
+                }
+            }
+        }
+
+        net.randomize(2.0..=5.0);
+
+        for layer in net.layers.iter() {
+            for &b in &layer.biases {
+                assert!(2.0 <= b && b <= 5.0);
+            }
+            for row in &layer.weights {
+                for &w in row {
+                    assert!(2.0 <= w && w <= 5.0);
+                }
+            }
+        }
     }
 
     #[test]
