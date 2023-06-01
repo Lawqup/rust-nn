@@ -1,5 +1,5 @@
 [package]
-name = "plot_learning"
+name = "adder_gui"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,4 +7,6 @@ edition = "2021"
 
 [dependencies]
 eframe = "0.22.0"
+egui = "0.22.0"
+lazy_static = "1.4.0"
 rust_nn = {path = "../../"}

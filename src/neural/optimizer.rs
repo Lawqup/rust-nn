@@ -4,7 +4,7 @@ use crate::{
     matrix::{Matrix1, Matrix2},
     neural::NeuralNet,
     prelude::*,
-    viz::App,
+    viz::Visualizer,
 };
 
 pub enum OptimizerMethod {
@@ -70,7 +70,7 @@ impl Optimizer {
         Ok(())
     }
 
-    pub fn train_gui(
+    pub fn train_gui<Gui: Visualizer>(
         &self,
         net: &mut NeuralNet,
         inputs: &Matrix2<f64>,
@@ -88,7 +88,8 @@ impl Optimizer {
                     }
                     if self.iterations_per_log.is_some_and(|ipl| i % ipl == 0) {
                         let mse = net.mean_squared_error(inputs, targets)?;
-                        tx.send([i as f64, mse]).map_err(|_| Error::ThreadErr)?;
+                        let outputs = net.run_batch(inputs)?;
+                        tx.send((i, mse, outputs)).map_err(|_| Error::ThreadErr)?;
                     }
                 }
                 Ok(())
@@ -97,7 +98,7 @@ impl Optimizer {
             let _ = eframe::run_native(
                 "RustNN",
                 eframe::NativeOptions::default(),
-                Box::new(|cc| Box::new(App::new(cc, rx))),
+                Box::new(|cc| Box::new(Gui::new(cc, rx))),
             );
 
             handle.join().map_err(|_| Error::ThreadErr)??;
