@@ -52,13 +52,13 @@ struct AccGui(NNGui);
 
 impl App for AccGui {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        let data = self.0.get_data();
+        let (data, res) = self.0.get_data();
 
-        let res = data
-            .last()
-            .map(|(_, _, k)| k.clone())
-            .unwrap_or(Matrix2::new(0, 0));
-        let data: Vec<_> = data.into_iter().map(|(i, j, _)| [i as f64, j]).collect();
+        if res.is_none() {
+            return;
+        }
+        let res = res.unwrap();
+        let data: Vec<_> = data.into_iter().map(|(i, j)| [i as f64, j]).collect();
 
         CentralPanel::default().show(ctx, |ui| {
             ui.columns(2, |cols| {

@@ -15,36 +15,42 @@ pub type IterationState = (usize, f64, Matrix2<f64>);
 
 /// Any type that can be rendered and updated during training
 pub trait Visualizer: eframe::App + 'static {
-    const DATA_LIMIT: usize = 20_000;
+    const DATA_LIMIT: usize = 10_000;
     fn new(cc: &CreationContext, rx: Receiver<IterationState>) -> Self;
 }
 
 /// Default gui that displays error while training
 pub struct NNGui {
-    data: Arc<Mutex<VecDeque<IterationState>>>,
+    data: Arc<Mutex<VecDeque<(usize, f64)>>>,
+    last_output: Arc<Mutex<Option<Matrix2<f64>>>>,
 }
 
 impl Visualizer for NNGui {
     /// Initialize NNGui, but also start a thread that listens to a receiver and updates the state
     fn new(cc: &CreationContext, rx: Receiver<IterationState>) -> Self {
         let data = Arc::new(Mutex::new(VecDeque::new()));
+        let last_output = Arc::new(Mutex::new(None));
+
         let data_clone = data.clone();
+        let last_output_clone = last_output.clone();
 
         let ctx = cc.egui_ctx.clone();
         thread::spawn(move || loop {
-            if let Ok(x) = rx.recv() {
+            if let Ok((i, err, outs)) = rx.recv() {
                 let mut data = data_clone.lock().unwrap();
 
                 if data.len() == Self::DATA_LIMIT {
                     data.pop_front();
                 }
 
-                data.push_back(x);
+                data.push_back((i, err));
+                let _ = last_output_clone.lock().unwrap().insert(outs);
+
                 ctx.request_repaint()
             }
         });
 
-        Self { data }
+        Self { data, last_output }
     }
 }
 
@@ -52,8 +58,9 @@ impl eframe::App for NNGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let data: Vec<_> = self
             .get_data()
+            .0
             .into_iter()
-            .map(|(i, j, _)| [i as f64, j])
+            .map(|(i, j)| [i as f64, j])
             .collect();
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {
@@ -68,7 +75,10 @@ impl eframe::App for NNGui {
 impl NNGui {
     /// Returns a clone of the data as a vec
     /// Blocks until it can get a lock on its state data
-    pub fn get_data(&self) -> Vec<IterationState> {
-        self.data.lock().unwrap().clone().into()
+    pub fn get_data(&self) -> (Vec<(usize, f64)>, Option<Matrix2<f64>>) {
+        (
+            self.data.lock().unwrap().clone().into(),
+            self.last_output.lock().unwrap().clone(),
+        )
     }
 }

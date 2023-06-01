@@ -1,4 +1,4 @@
-use std::sync::mpsc::{self};
+use std::sync::mpsc;
 
 use crate::{
     matrix::{Matrix1, Matrix2},
@@ -153,39 +153,34 @@ impl Optimizer {
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
     ) -> Result<()> {
-        let mut w_grads = Vec::new();
-        let mut b_grads = Vec::new();
+        let mut w_grads = vec![vec![Matrix2::<f64>::new(0, 0); net.layers.len()]; inputs.rows()];
+        let mut b_grads = vec![vec![Matrix1::<f64>::new(0); net.layers.len()]; inputs.rows()];
+
+        let mut d_acts = vec![Matrix1::<f64>::new(0); net.layers.len() + 1];
 
         // i -- current input sample
         // l -- current layer
         // n -- current neuron
         // p -- previous neuron
         for (i, input) in inputs.iter().enumerate() {
-            let mut w_grad = vec![Matrix2::<f64>::new(0, 0); net.layers.len()];
-            let mut b_grad = vec![Matrix1::<f64>::new(0); net.layers.len()];
-
             let acts = net.forward(input)?;
-            let mut d_acts = vec![Matrix1::new(0); acts.len()];
 
             d_acts[net.layers.len()] = (&acts[acts.len() - 1] - &targets[i])?;
 
             for (l, layer) in net.layers.iter().enumerate().rev() {
                 d_acts[l] = Matrix1::new(layer.weights.cols());
-                w_grad[l] = Matrix2::new(layer.weights.rows(), layer.weights.cols());
-                b_grad[l] = Matrix1::new(layer.biases.size());
+                w_grads[i][l] = Matrix2::new(layer.weights.rows(), layer.weights.cols());
+                b_grads[i][l] = Matrix1::new(layer.biases.size());
 
                 for n in 0..layer.weights.rows() {
                     let db = 2.0 * d_acts[l + 1][n] * layer.activation.derivative(acts[l + 1][n]);
-                    b_grad[l][n] += db;
+                    b_grads[i][l][n] += db;
                     for p in 0..layer.weights.cols() {
-                        w_grad[l][n][p] += db * acts[l][p];
+                        w_grads[i][l][n][p] += db * acts[l][p];
                         d_acts[l][p] += db * layer.weights[n][p];
                     }
                 }
             }
-
-            w_grads.push(w_grad);
-            b_grads.push(b_grad);
         }
 
         for i in 0..inputs.rows() {
