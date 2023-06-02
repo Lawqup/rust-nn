@@ -1,15 +1,10 @@
 use std::sync::mpsc;
 
-use crate::{
-    matrix::{Matrix1, Matrix2},
-    neural::NeuralNet,
-    prelude::*,
-    viz::Visualizer,
-};
+use crate::{matrix::Matrix2, neural::NeuralNet, prelude::*, viz::Visualizer};
+
+use super::utils::Grad;
 
 pub enum OptimizerMethod {
-    /// Takes in an epsilon used for approximating derivatives
-    FiniteDiff(f64),
     Backprop,
 }
 
@@ -55,12 +50,10 @@ impl Optimizer {
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
     ) -> Result<()> {
+        let mut grad = Grad::empty(net, inputs.rows());
         for i in 0..self.iterations {
             match self.method {
-                OptimizerMethod::FiniteDiff(eps) => {
-                    self.finite_diff_once(net, eps, inputs, targets)?
-                }
-                OptimizerMethod::Backprop => self.backprop_once(net, inputs, targets)?,
+                OptimizerMethod::Backprop => self.backprop_once(net, inputs, targets, &mut grad)?,
             }
             if self.iterations_per_log.is_some_and(|ipl| i % ipl == 0) {
                 let mse = net.mean_squared_error(inputs, targets)?;
@@ -76,15 +69,16 @@ impl Optimizer {
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
     ) -> Result<()> {
+        let mut grad = Grad::empty(net, inputs.rows());
+
         std::thread::scope(|scope| -> Result<()> {
             let (tx, rx) = mpsc::channel();
             let handle = scope.spawn(move || -> Result<()> {
                 for i in 0..self.iterations {
                     match self.method {
-                        OptimizerMethod::FiniteDiff(eps) => {
-                            self.finite_diff_once(net, eps, inputs, targets)?
+                        OptimizerMethod::Backprop => {
+                            self.backprop_once(net, inputs, targets, &mut grad)?
                         }
-                        OptimizerMethod::Backprop => self.backprop_once(net, inputs, targets)?,
                     }
                     if self.iterations_per_log.is_some_and(|ipl| i % ipl == 0) {
                         let mse = net.mean_squared_error(inputs, targets)?;
@@ -106,78 +100,35 @@ impl Optimizer {
         })
     }
 
-    fn finite_diff_once(
-        &self,
-        net: &mut NeuralNet,
-        eps: f64,
-        inputs: &Matrix2<f64>,
-        targets: &Matrix2<f64>,
-    ) -> Result<()> {
-        let mut w_grads = Vec::new();
-        let mut b_grads = Vec::new();
-
-        let costs = net.mean_squared_error(inputs, targets)?;
-        for i in 0..net.layers.len() {
-            w_grads.push(net.layers[i].weights.clone());
-            b_grads.push(net.layers[i].biases.clone());
-
-            for j in 0..net.layers[i].weights.rows() {
-                for k in 0..net.layers[i].weights.cols() {
-                    let saved = net.layers[i].weights[j][k];
-                    net.layers[i].weights[j][k] += eps;
-                    let dw = (net.mean_squared_error(inputs, targets)? - costs) / eps;
-
-                    net.layers[i].weights[j][k] = saved;
-                    w_grads[i][j][k] = -self.rate * dw;
-                }
-
-                let saved = net.layers[i].biases[j];
-                net.layers[i].biases[j] += eps;
-                let db = (net.mean_squared_error(inputs, targets)? - costs) / eps;
-
-                net.layers[i].biases[j] = saved;
-                b_grads[i][j] = -self.rate * db;
-            }
-        }
-
-        for i in 0..w_grads.len() {
-            net.layers[i].weights = (&net.layers[i].weights + &w_grads[i]).unwrap();
-            net.layers[i].biases = (&net.layers[i].biases + &b_grads[i]).unwrap();
-        }
-        Ok(())
-    }
-
     fn backprop_once(
         &self,
         net: &mut NeuralNet,
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
+        Grad(w_grads, b_grads, d_acts): &mut Grad,
     ) -> Result<()> {
-        let mut w_grads = vec![vec![Matrix2::<f64>::new(0, 0); net.layers.len()]; inputs.rows()];
-        let mut b_grads = vec![vec![Matrix1::<f64>::new(0); net.layers.len()]; inputs.rows()];
-
-        let mut d_acts = vec![Matrix1::<f64>::new(0); net.layers.len() + 1];
-
         // i -- current input sample
         // l -- current layer
         // n -- current neuron
         // p -- previous neuron
-        for (i, input) in inputs.iter().enumerate() {
-            let acts = net.forward(input)?;
+        for i in 0..inputs.rows() {
+            let acts = net.forward(&inputs.clone_row(i))?;
 
-            d_acts[net.layers.len()] = (&acts[acts.len() - 1] - &targets[i])?;
+            d_acts[net.layers.len()] = (&acts[acts.len() - 1] - &targets.clone_row(i))?;
 
             for (l, layer) in net.layers.iter().enumerate().rev() {
-                d_acts[l] = Matrix1::new(layer.weights.cols());
-                w_grads[i][l] = Matrix2::new(layer.weights.rows(), layer.weights.cols());
-                b_grads[i][l] = Matrix1::new(layer.biases.size());
+                w_grads[i][l].zero();
+                b_grads[i][l].zero();
+                d_acts[l].zero();
 
                 for n in 0..layer.weights.rows() {
-                    let db = 2.0 * d_acts[l + 1][n] * layer.activation.derivative(acts[l + 1][n]);
-                    b_grads[i][l][n] += db;
+                    let db = 2.0
+                        * d_acts[l + 1][(0, n)]
+                        * layer.activation.derivative(acts[l + 1][(0, n)]);
+                    b_grads[i][l][(0, n)] += db;
                     for p in 0..layer.weights.cols() {
-                        w_grads[i][l][n][p] += db * acts[l][p];
-                        d_acts[l][p] += db * layer.weights[n][p];
+                        w_grads[i][l][(n, p)] += db * acts[l][(0, p)];
+                        d_acts[l][(0, p)] += db * layer.weights[(n, p)];
                     }
                 }
             }

@@ -52,8 +52,8 @@ fn train_medium(iterations: usize) {
 }
 
 fn forward(net: &NeuralNet, inputs: &Matrix2<f64>) {
-    for input in inputs {
-        assert!(net.forward(input).is_ok());
+    for i in 0..inputs.rows() {
+        assert!(net.forward(&inputs.clone_row(i)).is_ok());
     }
 }
 

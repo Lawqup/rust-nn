@@ -45,20 +45,19 @@ fn img_to_normalized_training_data(path: &str) -> (Matrix2<f64>, Matrix2<f64>) {
 fn input_output_as_img(
     inputs: &Matrix2<f64>,
     outputs: &Matrix2<f64>,
+    width: u32,
 ) -> ImageBuffer<Luma<u8>, Vec<u8>> {
-    const WIDTH: u32 = 28;
-    const HEIGHT: u32 = 28;
-
-    let mut img = GrayImage::new(WIDTH, HEIGHT);
+    let mut img = GrayImage::new(width, width);
 
     for (x, y, v) in inputs
+        .as_vec()
         .iter()
-        .zip(outputs)
+        .zip(outputs.as_vec())
         .map(|(m1, m2)| (m1[0], m1[1], m2[0]))
     {
         img.put_pixel(
-            (x * WIDTH as f64) as u32,
-            (y * HEIGHT as f64) as u32,
+            (x * width as f64) as u32,
+            (y * width as f64) as u32,
             Luma([(v * 255.0) as u8]),
         );
     }
@@ -88,7 +87,7 @@ impl App for ImgGui {
         let data: Vec<_> = data.into_iter().map(|(i, j)| [i as f64, j]).collect();
 
         let mut buf = Vec::new();
-        let img = input_output_as_img(&*INPUTS, &outputs);
+        let img = input_output_as_img(&*INPUTS, &outputs, 28);
         JpegEncoder::new(&mut buf).encode_image(&img).unwrap();
         let output_image = RetainedImage::from_image_bytes("Output Image", &buf).unwrap();
 
@@ -129,16 +128,28 @@ impl Visualizer for ImgGui {
 }
 
 fn main() {
-    let mut net = NeuralNet::new(2, 28, &Activations::Sigmoid);
+    let mut net = NeuralNet::new(2, 8, &Activations::Sigmoid);
+    net.add_layer(6, &Activations::Sigmoid);
     net.add_layer(1, &Activations::Sigmoid);
 
-    let rate = 1.0;
+    let rate = 2.0;
 
-    let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate).with_log(Some(1));
+    let optim = Optimizer::new(OptimizerMethod::Backprop, 50_000, rate).with_log(Some(1));
 
     let _ = optim.train_gui::<ImgGui>(&mut net, &INPUTS, &TARGETS);
     // let _ = optim.train(&mut net, &INPUTS, &TARGETS);
 
-    let outputs = net.run_batch(&*INPUTS).unwrap();
-    let _ = input_output_as_img(&*INPUTS, &outputs).save("output.jpg");
+    const WIDTH: u32 = 500;
+
+    let mut inputs = Vec::new();
+    for x in 0..WIDTH {
+        for y in 0..WIDTH {
+            inputs.push(vec![x as f64 / WIDTH as f64, y as f64 / WIDTH as f64]);
+        }
+    }
+
+    let inputs = Matrix2::from_vec(inputs).unwrap();
+    let img = input_output_as_img(&inputs, &net.run_batch(&inputs).unwrap(), WIDTH);
+
+    let _ = img.save("output.jpg");
 }

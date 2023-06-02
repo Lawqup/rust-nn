@@ -1,10 +1,14 @@
 pub mod activations;
 pub mod optimizer;
+mod utils;
 
 use crate::prelude::*;
 use std::ops::RangeInclusive;
 
-use crate::matrix::{Dot, Matrix1, Matrix2, Transpose};
+use crate::matrix::{
+    ops::{Dot, Transpose},
+    Matrix2,
+};
 use rand::distributions::{Distribution, Uniform};
 
 use self::activations::{Activation, Activations};
@@ -12,7 +16,7 @@ use self::activations::{Activation, Activations};
 #[derive(Clone)]
 pub struct DenseLayer<'a> {
     weights: Matrix2<f64>,
-    biases: Matrix1<f64>,
+    biases: Matrix2<f64>,
     activation: &'a dyn Activation,
 }
 
@@ -39,7 +43,7 @@ impl<'a> DenseLayer<'a> {
         )
         .unwrap();
 
-        let biases = Matrix1::from_vec((0..n_neurons).map(|_| die.sample(&mut rng)).collect());
+        let biases = Matrix2::from_row((0..n_neurons).map(|_| die.sample(&mut rng)).collect());
 
         Self {
             weights,
@@ -56,27 +60,24 @@ impl<'a> DenseLayer<'a> {
 
     /// Propogates a batch of inputs through the layer applying the activation function.
     pub fn run_batch(&self, input: &Matrix2<f64>) -> Result<Matrix2<f64>> {
-        match input
-            .dot(&self.weights.transpose())
-            .and_then(|m| &m + &self.biases)
-        {
-            Ok(mut out) => {
-                out.apply(|x| self.activation.call(x));
-                Ok(out)
+        let mut res = input.dot(&self.weights.transpose())?;
+        for row in 0..res.rows() {
+            for col in 0..res.cols() {
+                res[(row, col)] += self.biases[(0, col)]
             }
-            Err(_) => Err(Error::DimensionErr),
         }
+        res.apply(|x| self.activation.call(x));
+        Ok(res)
     }
 
     /// Propogates an input through the layer applying the activation function.
-    pub fn forward(&self, input: &Matrix1<f64>) -> Result<Matrix1<f64>> {
-        match self.weights.dot(input).and_then(|m| &m + &self.biases) {
-            Ok(mut out) => {
-                out.apply(|x| self.activation.call(x));
-                Ok(out)
-            }
-            Err(_) => Err(Error::DimensionErr),
+    pub fn forward(&self, input: &Matrix2<f64>) -> Result<Matrix2<f64>> {
+        let mut res = input.dot(&self.weights.transpose())?;
+        for col in 0..res.cols() {
+            res[(0, col)] += self.biases[(0, col)]
         }
+        res.apply(|x| self.activation.call(x));
+        Ok(res)
     }
 
     /// Returns the amount of inputs this layer accepts
@@ -113,22 +114,22 @@ impl<'a> NeuralNet<'a> {
         let die = Uniform::from(r);
 
         for layer in self.layers.iter_mut() {
-            for b in &mut layer.biases {
-                *b = die.sample(&mut rng);
+            for b in 0..layer.biases.cols() {
+                layer.biases[(0, b)] = die.sample(&mut rng);
             }
-            for row in &mut layer.weights {
-                for w in row {
-                    *w = die.sample(&mut rng);
+            for row in 0..layer.weights.rows() {
+                for col in 0..layer.weights.cols() {
+                    layer.weights[(row, col)] = die.sample(&mut rng);
                 }
             }
         }
     }
 
-    pub fn forward(&self, input: &Matrix1<f64>) -> Result<Vec<Matrix1<f64>>> {
+    pub fn forward(&self, input: &Matrix2<f64>) -> Result<Vec<Matrix2<f64>>> {
         // NN has to be initialized with at least one layer
         let first_layer = self.layers.first().unwrap();
 
-        if input.size() as u32 != first_layer.input_amount() {
+        if input.cols() as u32 != first_layer.input_amount() {
             return Err(Error::DimensionErr);
         }
 
@@ -155,18 +156,6 @@ impl<'a> NeuralNet<'a> {
         Ok(prev_output)
     }
 
-    /// Normalizes an output such that each set of outputs in the batch add to 1.
-    pub fn normalize(input: Matrix2<f64>) -> Matrix2<f64> {
-        let mut normalized = Vec::new();
-        for mut row in input {
-            let sum: f64 = row.into_iter().sum();
-            row.apply(|x| x / sum);
-            normalized.push(row.to_vec());
-        }
-
-        Matrix2::from_vec(normalized).unwrap()
-    }
-
     /// Mean-squared error
     pub fn mean_squared_error(&self, inputs: &Matrix2<f64>, targets: &Matrix2<f64>) -> Result<f64> {
         // Prediction rows must match class target size
@@ -175,16 +164,14 @@ impl<'a> NeuralNet<'a> {
             return Err(Error::DimensionErr);
         }
 
-        let sum: f64 = outputs
-            .iter()
-            .zip(targets.iter())
-            .map(|(y, y_hat)| {
-                let mut diff = (y - y_hat).unwrap();
-                diff.apply(|x| x * x);
-                diff.iter().sum::<f64>() / diff.size() as f64
-            })
-            .sum();
-        Ok(sum / targets.rows() as f64)
+        let mut sum = 0.0;
+        for row in 0..outputs.rows() {
+            for col in 0..outputs.cols() {
+                let diff = outputs[(row, col)] - targets[(row, col)];
+                sum += diff * diff;
+            }
+        }
+        Ok(sum / (targets.rows() * targets.cols()) as f64)
     }
 }
 
@@ -213,7 +200,7 @@ mod tests {
         let layer2_out = layer2.run_batch(&layer1_out).unwrap();
 
         assert_eq!(layer2_out.dim(), (4, 1));
-        assert_eq!(layer2_out[2].as_vec(), layer2_out[3].as_vec());
+        assert_eq!(layer2_out.as_vec()[2], layer2_out.as_vec()[3]);
     }
 
     #[test]
@@ -224,8 +211,9 @@ mod tests {
 
         assert_eq!(out.dim(), (4, 20));
         assert!(out
+            .to_vec()
             .into_iter()
-            .all(|row| row.into_iter().all(|&x| x < 1.0 && x > 0.0)));
+            .all(|row| row.into_iter().all(|x| x < 1.0 && x > 0.0)));
     }
 
     #[test]
@@ -233,12 +221,12 @@ mod tests {
         let mut net = NeuralNet::new(4, 20, &Activations::Sigmoid);
 
         for layer in net.layers.iter() {
-            for &b in &layer.biases {
-                assert!(-1.0 <= b && b <= 1.0);
+            for &b in &layer.biases.as_vec()[0] {
+                assert!(-1.0 <= *b && *b <= 1.0);
             }
-            for row in &layer.weights {
+            for row in &layer.weights.as_vec() {
                 for &w in row {
-                    assert!(-1.0 <= w && w <= 1.0);
+                    assert!(-1.0 <= *w && *w <= 1.0);
                 }
             }
         }
@@ -246,12 +234,12 @@ mod tests {
         net.randomize(2.0..=5.0);
 
         for layer in net.layers.iter() {
-            for &b in &layer.biases {
-                assert!(2.0 <= b && b <= 5.0);
+            for &b in &layer.biases.as_vec()[0] {
+                assert!(2.0 <= *b && *b <= 5.0);
             }
-            for row in &layer.weights {
+            for row in &layer.weights.as_vec() {
                 for &w in row {
-                    assert!(2.0 <= w && w <= 5.0);
+                    assert!(2.0 <= *w && *w <= 5.0);
                 }
             }
         }
@@ -276,8 +264,8 @@ mod tests {
         println!("Final cost: {fin}");
 
         let res = net.run_batch(&inputs).unwrap();
-        for (inp, out) in inputs.iter().zip(res) {
-            println!("{:?} -> {}", inp.as_vec(), out[0])
+        for (inp, out) in inputs.to_vec().into_iter().zip(res.to_vec()) {
+            println!("{:?} -> {}", inp.to_vec(), out[0])
         }
 
         assert!(fin < 0.01);
@@ -302,8 +290,8 @@ mod tests {
         println!("Final cost: {fin}");
 
         let res = net.run_batch(&inputs).unwrap();
-        for (inp, out) in inputs.iter().zip(res) {
-            println!("{:?} -> {}", inp.as_vec(), out[0])
+        for (inp, out) in inputs.to_vec().into_iter().zip(res.to_vec()) {
+            println!("{:?} -> {}", inp.to_vec(), out[0])
         }
 
         assert!(fin < 0.01);
@@ -328,68 +316,10 @@ mod tests {
         println!("Final cost: {fin}");
 
         let res = net.run_batch(&inputs).unwrap();
-        for (inp, out) in inputs.iter().zip(res) {
-            println!("{:?} -> {:?}", inp.as_vec(), out.as_vec())
+        for (inp, out) in inputs.to_vec().into_iter().zip(res.to_vec()) {
+            println!("{:?} -> {}", inp.to_vec(), out[0])
         }
 
         assert!(fin < 0.001);
-    }
-
-    #[test]
-    fn train_adder() {
-        const BITS: u32 = 3; // Number of bits per number to add
-        let mut net = NeuralNet::new(2 * BITS, 4, &Activations::Sigmoid);
-        net.add_layer(2 * BITS + 1, &Activations::Sigmoid);
-        net.add_layer(BITS + 1, &Activations::Sigmoid);
-
-        let mut train_inputs = Vec::new();
-        let mut train_targets = Vec::new();
-
-        fn to_bitvec(x: i32, size: u32) -> Vec<i32> {
-            (0..size).map(|i| x >> i & 1).collect()
-        }
-        for i in 0..1 << BITS {
-            for j in 0..1 << BITS {
-                train_inputs.push([to_bitvec(i, BITS), to_bitvec(j, BITS)].concat());
-                train_targets.push(to_bitvec(i + j, BITS + 1))
-            }
-        }
-
-        let train_inputs = Matrix2::from_vec(train_inputs).unwrap().into();
-        let train_targets = Matrix2::from_vec(train_targets).unwrap().into();
-
-        let rate = 1.0;
-
-        let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate).with_log(Some(5_000));
-        assert_eq!(Ok(()), optim.train(&mut net, &train_inputs, &train_targets));
-
-        println!("------------------");
-        println!(
-            "Final training cost: {}",
-            net.mean_squared_error(&train_inputs, &train_targets)
-                .unwrap()
-        );
-
-        let res = net.run_batch(&train_inputs).unwrap();
-
-        fn from_bits(bv: Vec<f64>) -> usize {
-            bv.into_iter()
-                .enumerate()
-                .fold(0, |acc, (idx, v)| acc + ((v.round() as usize) << idx))
-        }
-        let mut correct = 0.0;
-        let inps = train_inputs.rows();
-        for (idx, mut i) in train_inputs.into_iter().map(|i| i.to_vec()).enumerate() {
-            let y = from_bits(res[idx].as_vec().clone());
-            let j = from_bits(i.split_off(BITS as usize));
-            let i = from_bits(i);
-            if i + j != y {
-                println!("{i}+{j} != {y}",);
-            } else {
-                correct += 1.0;
-            }
-        }
-
-        println!("Accuracy = {}", correct / inps as f64);
     }
 }

@@ -70,17 +70,22 @@ impl App for AccGui {
 
                 let mut incorrect = Vec::new();
 
-                fn from_bits(bv: &Vec<f64>) -> usize {
+                fn from_bits(bv: Vec<&f64>) -> usize {
                     bv.into_iter()
                         .enumerate()
                         .fold(0, |acc, (idx, v)| acc + ((v.round() as usize) << idx))
                 }
                 let mut correct = 0.0;
                 let inps = INPUTS.rows();
-                for (idx, mut i) in INPUTS.iter().map(|i| i.as_vec().clone()).enumerate() {
-                    let y = from_bits(res[idx].as_vec());
-                    let j = from_bits(&i.split_off(3 as usize));
-                    let i = from_bits(&i);
+                for (idx, mut i) in INPUTS
+                    .as_vec()
+                    .iter()
+                    .map(|i| i.to_vec().clone())
+                    .enumerate()
+                {
+                    let y = from_bits(res.row_as_vec(idx));
+                    let j = from_bits(i.split_off(3 as usize));
+                    let i = from_bits(i);
                     if i + j != y {
                         incorrect.push(format!("{i} + {j} != {y}"))
                     } else {
@@ -105,13 +110,13 @@ impl Visualizer for AccGui {
 }
 
 fn main() {
-    let mut net = NeuralNet::new(2 * BITS, 4, &Activations::Sigmoid);
-    net.add_layer(3 * BITS + 1, &Activations::ReLU);
+    let mut net = NeuralNet::new(2 * BITS, 2 * BITS + 1, &Activations::Sigmoid);
+    net.add_layer(3 * BITS + 1, &Activations::Sigmoid);
     net.add_layer(BITS + 1, &Activations::Sigmoid);
 
     let rate = 1.0;
 
-    let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate).with_log(Some(1));
+    let optim = Optimizer::new(OptimizerMethod::Backprop, 30_000, rate).with_log(Some(1));
 
     let _ = optim.train_gui::<AccGui>(&mut net, &INPUTS, &TARGETS);
 }
