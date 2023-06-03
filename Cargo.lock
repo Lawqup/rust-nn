@@ -2150,7 +2150,6 @@ dependencies = [
  "criterion",
  "eframe",
  "egui",
- "itertools",
  "rand",
 ]
 

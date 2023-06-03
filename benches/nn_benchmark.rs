@@ -9,8 +9,8 @@ use rust_nn::{
 };
 
 fn train_tiny(iterations: usize) {
-    let mut net = NeuralNet::new(2, 2, &Activations::Arctan);
-    net.add_layer(1, &Activations::Sigmoid);
+    let mut net = NeuralNet::new(2, 2, Activations::Arctan);
+    net.add_layer(1, Activations::Sigmoid);
 
     let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
     let targets = Matrix2::from_array([[0], [1], [1], [0]]).into();
@@ -23,9 +23,9 @@ fn train_tiny(iterations: usize) {
 }
 
 fn train_small(iterations: usize) {
-    let mut net = NeuralNet::new(2, 10, &Activations::Sigmoid);
-    net.add_layer(10, &Activations::ReLU);
-    net.add_layer(2, &Activations::Sigmoid);
+    let mut net = NeuralNet::new(2, 10, Activations::Sigmoid);
+    net.add_layer(10, Activations::ReLU);
+    net.add_layer(2, Activations::Sigmoid);
 
     let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
     let targets = Matrix2::from_array([[0, 0], [1, 0], [1, 0], [0, 1]]).into();
@@ -37,10 +37,10 @@ fn train_small(iterations: usize) {
 }
 
 fn train_medium(iterations: usize) {
-    let mut net = NeuralNet::new(2, 20, &Activations::Sigmoid);
-    net.add_layer(20, &Activations::Arctan);
-    net.add_layer(20, &Activations::Arctan);
-    net.add_layer(2, &Activations::Sigmoid);
+    let mut net = NeuralNet::new(2, 20, Activations::Sigmoid);
+    net.add_layer(20, Activations::Arctan);
+    net.add_layer(20, Activations::Arctan);
+    net.add_layer(2, Activations::Sigmoid);
 
     let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
     let targets = Matrix2::from_array([[0, 0], [1, 0], [1, 0], [0, 1]]).into();
@@ -58,14 +58,14 @@ fn forward(net: &NeuralNet, inputs: &Matrix2<f64>) {
 }
 
 fn bench_forward(c: &mut Criterion) {
-    let mut small = NeuralNet::new(2, 10, &Activations::Sigmoid);
-    small.add_layer(10, &Activations::Arctan);
-    small.add_layer(2, &Activations::Arctan);
+    let mut small = NeuralNet::new(2, 10, Activations::Sigmoid);
+    small.add_layer(10, Activations::Arctan);
+    small.add_layer(2, Activations::Arctan);
 
-    let mut medium = NeuralNet::new(2, 20, &Activations::Sigmoid);
-    medium.add_layer(20, &Activations::Arctan);
-    medium.add_layer(20, &Activations::Arctan);
-    medium.add_layer(2, &Activations::Sigmoid);
+    let mut medium = NeuralNet::new(2, 20, Activations::Sigmoid);
+    medium.add_layer(20, Activations::Arctan);
+    medium.add_layer(20, Activations::Arctan);
+    medium.add_layer(2, Activations::Sigmoid);
 
     let input_small = Matrix2::new(10, 2);
     let input_medium = Matrix2::new(1_000, 2);

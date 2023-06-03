@@ -1,6 +1,11 @@
-use std::sync::mpsc;
+use std::sync::mpsc::{self, Sender};
 
-use crate::{matrix::Matrix2, neural::NeuralNet, prelude::*, viz::Visualizer};
+use crate::{
+    matrix::Matrix2,
+    neural::NeuralNet,
+    prelude::*,
+    viz::{EpochState, Visualizer},
+};
 
 use super::utils::Grad;
 
@@ -10,29 +15,29 @@ pub enum OptimizerMethod {
 
 pub struct Optimizer {
     method: OptimizerMethod,
-    iterations: usize,
-    iterations_per_log: Option<usize>,
-    gui: bool,
+    epochs: usize,
+    epochs_per_log: Option<usize>,
     rate: f64,
+    batch_size: Option<usize>,
 }
 
 impl Optimizer {
-    pub fn new(method: OptimizerMethod, iterations: usize, rate: f64) -> Self {
+    pub fn new(method: OptimizerMethod, epochs: usize, rate: f64) -> Self {
         Self {
             method,
-            iterations,
-            iterations_per_log: None,
-            gui: false,
+            epochs,
+            epochs_per_log: None,
             rate,
+            batch_size: None,
         }
     }
 
-    pub fn toggle_gui(mut self) -> Self {
-        self.gui = !self.gui;
+    pub fn with_batches(mut self, batch_size: Option<usize>) -> Self {
+        self.batch_size = batch_size;
         self
     }
     pub fn with_log(mut self, iterations_per_log: Option<usize>) -> Self {
-        self.iterations_per_log = iterations_per_log;
+        self.epochs_per_log = iterations_per_log;
         self
     }
 
@@ -41,7 +46,54 @@ impl Optimizer {
     }
 
     pub fn set_iterations(&mut self, iterations: usize) {
-        self.iterations = iterations;
+        self.epochs = iterations;
+    }
+
+    fn train_internal(
+        &self,
+        net: &mut NeuralNet,
+        inputs: &Matrix2<f64>,
+        targets: &Matrix2<f64>,
+        gui: bool,
+        tx: Option<&Sender<EpochState>>,
+    ) -> Result<()> {
+        let mut inputs = inputs.clone();
+        let mut targets = targets.clone();
+
+        // Actually max batch size, last batch might be smaller
+        let batch_size = self.batch_size.unwrap_or(inputs.rows());
+        let n_batches = (inputs.rows() as f64 / batch_size as f64).ceil() as usize;
+
+        let mut grad = Grad::empty(net, batch_size);
+        for epoch in 0..self.epochs {
+            // No need for SGD if input isn't batched
+            if n_batches > 1 {
+                Matrix2::shuffle_rows_synced(&mut inputs, &mut targets)?;
+            }
+
+            let mut error_sum = 0.0;
+            for batch in 0..n_batches {
+                let curr_batch = inputs.copy_rows(batch, batch_size);
+                let curr_batch_targets = targets.copy_rows(batch, batch_size);
+                match self.method {
+                    OptimizerMethod::Backprop => {
+                        self.backprop_once(net, &curr_batch, &curr_batch_targets, &mut grad)?
+                    }
+                }
+                error_sum += net.mean_squared_error(&curr_batch, &curr_batch_targets)?;
+            }
+            if self.epochs_per_log.is_some_and(|ipl| epoch % ipl == 0) {
+                let mse = error_sum / n_batches as f64;
+                if gui {
+                    tx.unwrap()
+                        .send((epoch, mse, net.clone()))
+                        .map_err(|_| Error::ThreadErr)?;
+                } else {
+                    println!("Epoch {epoch} error: {mse}")
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn train(
@@ -50,43 +102,19 @@ impl Optimizer {
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
     ) -> Result<()> {
-        let mut grad = Grad::empty(net, inputs.rows());
-        for i in 0..self.iterations {
-            match self.method {
-                OptimizerMethod::Backprop => self.backprop_once(net, inputs, targets, &mut grad)?,
-            }
-            if self.iterations_per_log.is_some_and(|ipl| i % ipl == 0) {
-                let mse = net.mean_squared_error(inputs, targets)?;
-                println!("Iteration {i} error: {mse}")
-            }
-        }
-        Ok(())
+        self.train_internal(net, inputs, targets, false, None)
     }
 
-    pub fn train_gui<Gui: Visualizer>(
+    pub fn train_gui<Gui: Visualizer + 'static>(
         &self,
         net: &mut NeuralNet,
         inputs: &Matrix2<f64>,
         targets: &Matrix2<f64>,
     ) -> Result<()> {
-        let mut grad = Grad::empty(net, inputs.rows());
-
         std::thread::scope(|scope| -> Result<()> {
             let (tx, rx) = mpsc::channel();
             let handle = scope.spawn(move || -> Result<()> {
-                for i in 0..self.iterations {
-                    match self.method {
-                        OptimizerMethod::Backprop => {
-                            self.backprop_once(net, inputs, targets, &mut grad)?
-                        }
-                    }
-                    if self.iterations_per_log.is_some_and(|ipl| i % ipl == 0) {
-                        let mse = net.mean_squared_error(inputs, targets)?;
-                        let outputs = net.run_batch(inputs)?;
-                        tx.send((i, mse, outputs)).map_err(|_| Error::ThreadErr)?;
-                    }
-                }
-                Ok(())
+                self.train_internal(net, inputs, targets, true, Some(&tx))
             });
 
             let _ = eframe::run_native(

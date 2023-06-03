@@ -20,7 +20,7 @@ use rust_nn::{
         optimizer::{Optimizer, OptimizerMethod},
         NeuralNet,
     },
-    viz::{IterationState, NNGui, Visualizer},
+    viz::{EpochState, NNGui, Visualizer},
 };
 
 fn img_to_normalized_training_data(path: &str) -> (Matrix2<f64>, Matrix2<f64>) {
@@ -77,16 +77,17 @@ struct ImgGui {
 
 impl App for ImgGui {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        let (data, outputs) = self.nn_gui.get_data();
+        let (data, net) = self.nn_gui.get_data();
 
-        if outputs.is_none() {
+        if net.is_none() {
             return;
         }
 
-        let outputs = outputs.unwrap();
+        let net = net.unwrap();
         let data: Vec<_> = data.into_iter().map(|(i, j)| [i as f64, j]).collect();
 
         let mut buf = Vec::new();
+        let outputs = net.run_batch(&*INPUTS).unwrap();
         let img = input_output_as_img(&*INPUTS, &outputs, 28);
         JpegEncoder::new(&mut buf).encode_image(&img).unwrap();
         let output_image = RetainedImage::from_image_bytes("Output Image", &buf).unwrap();
@@ -112,7 +113,7 @@ impl App for ImgGui {
 }
 
 impl Visualizer for ImgGui {
-    fn new(cc: &eframe::CreationContext, rx: Receiver<IterationState>) -> Self {
+    fn new(cc: &eframe::CreationContext, rx: Receiver<EpochState>) -> Self {
         let target_file = File::open("assets/nine.jpg").unwrap();
         let mut reader = BufReader::new(target_file);
         let mut buf = Vec::new();
@@ -128,13 +129,15 @@ impl Visualizer for ImgGui {
 }
 
 fn main() {
-    let mut net = NeuralNet::new(2, 8, &Activations::Sigmoid);
-    net.add_layer(6, &Activations::Sigmoid);
-    net.add_layer(1, &Activations::Sigmoid);
+    let mut net = NeuralNet::new(2, 8, Activations::Sigmoid);
+    net.add_layer(6, Activations::Sigmoid);
+    net.add_layer(1, Activations::Sigmoid);
 
-    let rate = 2.0;
+    let rate = 1.5;
 
-    let optim = Optimizer::new(OptimizerMethod::Backprop, 50_000, rate).with_log(Some(1));
+    let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate)
+        .with_log(Some(1))
+        .with_batches(Some(20));
 
     let _ = optim.train_gui::<ImgGui>(&mut net, &INPUTS, &TARGETS);
     // let _ = optim.train(&mut net, &INPUTS, &TARGETS);

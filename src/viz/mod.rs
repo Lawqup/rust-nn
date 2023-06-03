@@ -7,32 +7,32 @@ use std::{
 use eframe::CreationContext;
 use egui::plot::{Line, Plot};
 
-use crate::matrix::Matrix2;
+use crate::neural::NeuralNet;
 
 /// State sent to the GUI renderer on each logged iteration of training
-/// (iteration, error, outputs)
-pub type IterationState = (usize, f64, Matrix2<f64>);
+/// (iteration, error, copy of neural net)
+pub type EpochState = (usize, f64, NeuralNet);
 
 /// Any type that can be rendered and updated during training
-pub trait Visualizer: eframe::App + 'static {
+pub trait Visualizer: eframe::App {
     const DATA_LIMIT: usize = 10_000;
-    fn new(cc: &CreationContext, rx: Receiver<IterationState>) -> Self;
+    fn new(cc: &CreationContext, rx: Receiver<EpochState>) -> Self;
 }
 
 /// Default gui that displays error while training
 pub struct NNGui {
     data: Arc<Mutex<VecDeque<(usize, f64)>>>,
-    last_output: Arc<Mutex<Option<Matrix2<f64>>>>,
+    net: Arc<Mutex<Option<NeuralNet>>>,
 }
 
 impl Visualizer for NNGui {
     /// Initialize NNGui, but also start a thread that listens to a receiver and updates the state
-    fn new(cc: &CreationContext, rx: Receiver<IterationState>) -> Self {
+    fn new(cc: &CreationContext, rx: Receiver<EpochState>) -> Self {
         let data = Arc::new(Mutex::new(VecDeque::new()));
-        let last_output = Arc::new(Mutex::new(None));
+        let net = Arc::new(Mutex::new(None));
 
         let data_clone = data.clone();
-        let last_output_clone = last_output.clone();
+        let last_output_clone = net.clone();
 
         let ctx = cc.egui_ctx.clone();
         thread::spawn(move || loop {
@@ -50,7 +50,7 @@ impl Visualizer for NNGui {
             }
         });
 
-        Self { data, last_output }
+        Self { data, net }
     }
 }
 
@@ -75,10 +75,10 @@ impl eframe::App for NNGui {
 impl NNGui {
     /// Returns a clone of the data as a vec
     /// Blocks until it can get a lock on its state data
-    pub fn get_data(&self) -> (Vec<(usize, f64)>, Option<Matrix2<f64>>) {
+    pub fn get_data(&self) -> (Vec<(usize, f64)>, Option<NeuralNet>) {
         (
             self.data.lock().unwrap().clone().into(),
-            self.last_output.lock().unwrap().clone(),
+            self.net.lock().unwrap().clone(),
         )
     }
 }

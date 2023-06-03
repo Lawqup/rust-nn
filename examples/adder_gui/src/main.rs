@@ -14,10 +14,10 @@ use rust_nn::{
         optimizer::{Optimizer, OptimizerMethod},
         NeuralNet,
     },
-    viz::{IterationState, NNGui, Visualizer},
+    viz::{EpochState, NNGui, Visualizer},
 };
 
-const BITS: u32 = 3; // Number of bits per number to add
+const BITS: u32 = 4; // Number of bits per number to add
 
 fn to_bitvec(x: i32, size: u32) -> Vec<i32> {
     (0..size).map(|i| x >> i & 1).collect()
@@ -52,12 +52,12 @@ struct AccGui(NNGui);
 
 impl App for AccGui {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        let (data, res) = self.0.get_data();
+        let (data, net) = self.0.get_data();
 
-        if res.is_none() {
+        if net.is_none() {
             return;
         }
-        let res = res.unwrap();
+        let net = net.unwrap();
         let data: Vec<_> = data.into_iter().map(|(i, j)| [i as f64, j]).collect();
 
         CentralPanel::default().show(ctx, |ui| {
@@ -77,13 +77,14 @@ impl App for AccGui {
                 }
                 let mut correct = 0.0;
                 let inps = INPUTS.rows();
+                let outs = net.run_batch(&INPUTS).unwrap();
                 for (idx, mut i) in INPUTS
                     .as_vec()
                     .iter()
                     .map(|i| i.to_vec().clone())
                     .enumerate()
                 {
-                    let y = from_bits(res.row_as_vec(idx));
+                    let y = from_bits(outs.row_as_vec(idx));
                     let j = from_bits(i.split_off(3 as usize));
                     let i = from_bits(i);
                     if i + j != y {
@@ -104,19 +105,23 @@ impl App for AccGui {
 }
 
 impl Visualizer for AccGui {
-    fn new(cc: &eframe::CreationContext, rx: Receiver<IterationState>) -> Self {
+    fn new(cc: &eframe::CreationContext, rx: Receiver<EpochState>) -> Self {
         Self(NNGui::new(cc, rx))
     }
 }
 
 fn main() {
-    let mut net = NeuralNet::new(2 * BITS, 2 * BITS + 1, &Activations::Sigmoid);
-    net.add_layer(3 * BITS + 1, &Activations::Sigmoid);
-    net.add_layer(BITS + 1, &Activations::Sigmoid);
+    let mut net = NeuralNet::new(2 * BITS, 10, Activations::Sigmoid);
+    net.add_layer(10, Activations::Sigmoid);
+    net.add_layer(10, Activations::Sigmoid);
+    net.add_layer(10, Activations::Sigmoid);
+    net.add_layer(BITS + 1, Activations::Sigmoid);
 
     let rate = 1.0;
 
-    let optim = Optimizer::new(OptimizerMethod::Backprop, 30_000, rate).with_log(Some(1));
+    let optim = Optimizer::new(OptimizerMethod::Backprop, 30_000, rate)
+        .with_log(Some(1))
+        .with_batches(Some(10));
 
     let _ = optim.train_gui::<AccGui>(&mut net, &INPUTS, &TARGETS);
 }

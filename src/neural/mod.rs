@@ -3,7 +3,7 @@ pub mod optimizer;
 mod utils;
 
 use crate::prelude::*;
-use std::ops::RangeInclusive;
+use std::{ops::RangeInclusive, sync::Arc};
 
 use crate::matrix::{
     ops::{Dot, Transpose},
@@ -14,17 +14,18 @@ use rand::distributions::{Distribution, Uniform};
 use self::activations::{Activation, Activations};
 
 #[derive(Clone)]
-pub struct DenseLayer<'a> {
+pub struct DenseLayer {
     weights: Matrix2<f64>,
     biases: Matrix2<f64>,
-    activation: &'a dyn Activation,
+    activation: Arc<dyn Activation>,
 }
 
-pub struct NeuralNet<'a> {
-    layers: Vec<DenseLayer<'a>>,
+#[derive(Clone)]
+pub struct NeuralNet {
+    layers: Vec<DenseLayer>,
 }
 
-impl<'a> DenseLayer<'a> {
+impl DenseLayer {
     /// Initializes a layer given the number of inputs and neurons.
     /// Params initialized as a random value in init_range
     /// Activation function is initally the identity (f(x) = x)
@@ -48,13 +49,13 @@ impl<'a> DenseLayer<'a> {
         Self {
             weights,
             biases,
-            activation: &Activations::Identity,
+            activation: Arc::new(Activations::Identity),
         }
     }
 
     /// Add an activation function of this layer
-    pub fn with_activation(mut self, activation: &'a impl Activation) -> Self {
-        self.activation = activation;
+    pub fn with_activation(mut self, activation: impl Activation + 'static) -> Self {
+        self.activation = Arc::new(activation);
         self
     }
 
@@ -91,10 +92,10 @@ impl<'a> DenseLayer<'a> {
     }
 }
 
-impl<'a> NeuralNet<'a> {
+impl NeuralNet {
     /// Creates a 1-layer neural net with some number of neurons
     /// that can accept a certain number of inputs
-    pub fn new(n_inputs: u32, n_neurons: u32, activation: &'a impl Activation) -> Self {
+    pub fn new(n_inputs: u32, n_neurons: u32, activation: impl Activation + 'static) -> Self {
         Self {
             layers: vec![
                 DenseLayer::new(n_inputs, n_neurons, -1.0..=1.0).with_activation(activation)
@@ -102,7 +103,7 @@ impl<'a> NeuralNet<'a> {
         }
     }
 
-    pub fn add_layer(&mut self, n_neurons: u32, activation: &'a impl Activation) {
+    pub fn add_layer(&mut self, n_neurons: u32, activation: impl Activation + 'static) {
         let n_inputs = self.layers.last().unwrap().neuron_amount();
         self.layers
             .push(DenseLayer::new(n_inputs, n_neurons, -1.0..=1.0).with_activation(activation));
@@ -205,7 +206,7 @@ mod tests {
 
     #[test]
     fn activation_function() {
-        let net = NeuralNet::new(4, 20, &Activations::Sigmoid);
+        let net = NeuralNet::new(4, 20, Activations::Sigmoid);
 
         let out = net.run_batch(&default_inputs()).unwrap();
 
@@ -218,7 +219,7 @@ mod tests {
 
     #[test]
     fn randomize() {
-        let mut net = NeuralNet::new(4, 20, &Activations::Sigmoid);
+        let mut net = NeuralNet::new(4, 20, Activations::Sigmoid);
 
         for layer in net.layers.iter() {
             for &b in &layer.biases.as_vec()[0] {
@@ -248,7 +249,7 @@ mod tests {
     #[test]
     fn train_or() {
         // Train a single neuron to compute OR
-        let mut net = NeuralNet::new(2, 1, &Activations::Sigmoid);
+        let mut net = NeuralNet::new(2, 1, Activations::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0], [1], [1], [1]]).into();
@@ -273,8 +274,8 @@ mod tests {
 
     #[test]
     fn train_xor() {
-        let mut net = NeuralNet::new(2, 2, &Activations::Arctan);
-        net.add_layer(1, &Activations::Sigmoid);
+        let mut net = NeuralNet::new(2, 2, Activations::Arctan);
+        net.add_layer(1, Activations::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
         let targets = Matrix2::from_array([[0], [1], [1], [0]]).into();
@@ -298,16 +299,19 @@ mod tests {
     }
 
     #[test]
-    fn train_multi_in_multi_out() {
-        let mut net = NeuralNet::new(2, 2, &Activations::Sigmoid);
-        net.add_layer(2, &Activations::Sigmoid);
+    fn train_xor_batched() {
+        let mut net = NeuralNet::new(2, 2, Activations::Arctan);
+        net.add_layer(1, Activations::Sigmoid);
 
         let inputs = Matrix2::from_array([[0, 0], [0, 1], [1, 0], [1, 1]]).into();
-        let targets = Matrix2::from_array([[0, 0], [1, 0], [1, 0], [0, 1]]).into();
+        let targets = Matrix2::from_array([[0], [1], [1], [0]]).into();
 
-        let rate = 10e-3;
+        let rate = 10e-0;
 
-        let optim = Optimizer::new(OptimizerMethod::Backprop, 100_000, rate).with_log(Some(5_000));
+        let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate)
+            .with_log(Some(1_000))
+            .with_batches(Some(2));
+
         assert_eq!(Ok(()), optim.train(&mut net, &inputs, &targets));
 
         let fin = net.mean_squared_error(&inputs, &targets).unwrap();
@@ -320,6 +324,6 @@ mod tests {
             println!("{:?} -> {}", inp.to_vec(), out[0])
         }
 
-        assert!(fin < 0.001);
+        assert!(fin < 0.01);
     }
 }

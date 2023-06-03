@@ -1,5 +1,10 @@
+use rand::Rng;
+
 use crate::prelude::*;
-use std::ops::{Index, IndexMut};
+use std::{
+    fmt::Display,
+    ops::{Index, IndexMut},
+};
 
 pub mod ops;
 
@@ -107,6 +112,10 @@ impl<T> Matrix2<T> {
         res
     }
 
+    pub fn as_row_major(&self) -> &Vec<T> {
+        &self.data
+    }
+
     pub fn as_vec(&self) -> Vec<Vec<&T>> {
         let mut res = Vec::with_capacity(self.rows());
         for row in 0..self.rows() {
@@ -117,6 +126,43 @@ impl<T> Matrix2<T> {
             res.push(r)
         }
         res
+    }
+
+    /// Shuffles the rows of two matrices with the same amount of rows
+    /// as if their rows were concatenated
+    pub fn shuffle_rows_synced(m1: &mut Matrix2<T>, m2: &mut Matrix2<T>) -> Result<()> {
+        if m1.rows() != m2.rows() {
+            return Err(Error::DimensionErr);
+        }
+
+        let mut rng = rand::thread_rng();
+        let rows = m1.rows();
+        let cols_m1 = m1.cols();
+        let cols_m2 = m2.cols();
+        for i in 0..rows {
+            let rand_row = rng.gen_range(i..rows);
+            for col in 0..cols_m1 {
+                m1.data.swap(i * cols_m1 + col, rand_row * cols_m1 + col);
+            }
+            for col in 0..cols_m2 {
+                m2.data.swap(i * cols_m2 + col, rand_row * cols_m2 + col);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<T: Display> Display for Matrix2<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for row in 0..self.rows() {
+            for col in 0..self.cols() {
+                write!(f, "{} ", self[(row, col)])?;
+            }
+            writeln!(f)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -131,6 +177,17 @@ impl<T: Clone> Matrix2<&T> {
         Matrix2 {
             data: data_clone,
             dim: (self.rows(), self.cols()),
+        }
+    }
+}
+
+impl<T: Copy> Matrix2<T> {
+    pub fn copy_rows(&self, from: usize, n: usize) -> Self {
+        let end_row = (from + n).min(self.rows());
+        let data = &self.data[from * self.cols()..end_row * self.cols()];
+        Self {
+            data: data.to_vec(),
+            dim: (end_row - from, self.cols()),
         }
     }
 }
@@ -182,6 +239,8 @@ impl From<Matrix2<i32>> for Matrix2<f64> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     #[test]
     fn access_matrix2_from_array() {
@@ -223,5 +282,24 @@ mod tests {
         matrix.apply(|x| x / 2);
 
         assert_eq!(matrix.to_vec(), [[0, 1], [1, 1], [2, 4]]);
+    }
+
+    #[test]
+    fn shuffle_rows() {
+        let mut relation = HashMap::new();
+        relation.insert([1, 2], [9]);
+        relation.insert([2, 2], [7]);
+        relation.insert([4, 8], [1]);
+        let mut m1 = Matrix2::from_array([[1, 2], [2, 2], [4, 8]]);
+        let mut m2 = Matrix2::from_array([[9], [7], [1]]);
+
+        assert_eq!(Ok(()), Matrix2::shuffle_rows_synced(&mut m1, &mut m2));
+
+        println!("m1 = {m1}\nm2 = {m2}");
+        assert!(m1
+            .to_vec()
+            .into_iter()
+            .zip(m2.to_vec())
+            .all(|(v1, v2)| relation[v1.as_slice()] == v2.as_slice()));
     }
 }
