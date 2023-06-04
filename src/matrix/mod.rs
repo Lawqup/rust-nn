@@ -58,6 +58,16 @@ impl<T> Matrix2<T> {
         Self { data, dim: (R, C) }
     }
 
+    pub fn concat_rows(&mut self, mut other: Matrix2<T>) -> Result<()> {
+        if self.cols() != other.cols() {
+            return Err(Error::DimensionErr);
+        }
+
+        self.data.append(&mut other.data);
+        self.dim.0 += other.rows();
+        Ok(())
+    }
+
     pub fn dim(&self) -> (usize, usize) {
         self.dim
     }
