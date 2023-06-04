@@ -17,7 +17,7 @@ use rust_nn::{
     viz::{EpochState, NNGui, Visualizer},
 };
 
-const BITS: u32 = 4; // Number of bits per number to add
+const BITS: u32 = 3; // Number of bits per number to add
 
 fn to_bitvec(x: i32, size: u32) -> Vec<i32> {
     (0..size).map(|i| x >> i & 1).collect()
@@ -112,8 +112,6 @@ impl Visualizer for AccGui {
 
 fn main() {
     let mut net = NeuralNet::new(2 * BITS, 10, Activations::Sigmoid);
-    net.add_layer(10, Activations::Sigmoid);
-    net.add_layer(10, Activations::Sigmoid);
     net.add_layer(10, Activations::Sigmoid);
     net.add_layer(BITS + 1, Activations::Sigmoid);
 
