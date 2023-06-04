@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufReader, Read},
+    io::{BufReader, BufWriter, Read, Write},
     sync::mpsc::Receiver,
 };
 
@@ -11,7 +11,10 @@ use egui::{
 };
 
 use egui_extras::RetainedImage;
-use image::{codecs::jpeg::JpegEncoder, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel};
+use image::{
+    codecs::{gif::GifEncoder, jpeg::JpegEncoder},
+    Delay, DynamicImage, Frame, Frames, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
+};
 use lazy_static::lazy_static;
 use rust_nn::{
     matrix::Matrix2,
@@ -114,9 +117,6 @@ impl App for ImgGui {
         let net = net.unwrap();
         let data: Vec<_> = data.into_iter().map(|(i, j)| [i as f64, j]).collect();
 
-        let output_image1 = inputs_to_retained_image(&net, &*IMG1_INPUTS);
-        let output_image2 = inputs_to_retained_image(&net, &*IMG2_INPUTS);
-
         let slider_image = inputs_to_retained_image(&net, &generate_inputs(28, self.slider_val));
 
         CentralPanel::default().show(ctx, |ui| {
@@ -133,11 +133,6 @@ impl App for ImgGui {
                     ui.horizontal(|ui| {
                         self.target1.show_scaled(ui, 5.0);
                         self.target2.show_scaled(ui, 5.0);
-                    });
-
-                    ui.horizontal(|ui| {
-                        output_image1.show_scaled(ui, 5.0);
-                        output_image2.show_scaled(ui, 5.0);
                     });
 
                     slider_image.show_scaled(ui, 10.0);
@@ -177,6 +172,7 @@ impl Visualizer for ImgGui {
 fn main() {
     let mut net = NeuralNet::new(3, 10, Activations::Sigmoid);
     net.add_layer(10, Activations::Sigmoid);
+    net.add_layer(5, Activations::Sigmoid);
     net.add_layer(1, Activations::Sigmoid);
 
     let rate = 1.2;
@@ -192,15 +188,31 @@ fn main() {
     targets.concat_rows(IMG2_OUTPUTS.clone()).unwrap();
 
     let _ = optim.train_gui::<ImgGui>(&mut net, &inputs, &targets);
-    // let _ = optim.train(&mut net, &INPUTS, &TARGETS);
 
     const WIDTH: u32 = 500;
+    const FRAMES: u32 = 60;
 
-    let img = input_output_as_img(
-        &generate_inputs(WIDTH, 0.0),
-        &net.run_batch(&inputs).unwrap(),
-        WIDTH,
-    );
+    let mut frames = Vec::new();
+    for i in 0..=FRAMES {
+        let upscaled_inputs = generate_inputs(WIDTH, i as f64 / FRAMES as f64);
+        let img = input_output_as_img(
+            &upscaled_inputs,
+            &net.run_batch(&upscaled_inputs).unwrap(),
+            WIDTH,
+        );
 
-    let _ = img.save("output.jpg");
+        let rgba = DynamicImage::ImageLuma8(img).into_rgba8();
+        frames.push(Frame::from_parts(
+            rgba,
+            0,
+            0,
+            Delay::from_numer_denom_ms(1, 8),
+        ));
+    }
+
+    let mut buf = Vec::new();
+    GifEncoder::new(&mut buf).encode_frames(frames).unwrap();
+    let gif_file = File::create("output.gif").unwrap();
+    let mut writer = BufWriter::new(gif_file);
+    writer.write_all(&buf).unwrap();
 }
