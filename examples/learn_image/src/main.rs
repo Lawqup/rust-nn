@@ -13,7 +13,7 @@ use egui::{
 use egui_extras::RetainedImage;
 use image::{
     codecs::{gif::GifEncoder, jpeg::JpegEncoder},
-    Delay, DynamicImage, Frame, Frames, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
+    Delay, DynamicImage, Frame, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
 };
 use lazy_static::lazy_static;
 use rust_nn::{
@@ -124,7 +124,7 @@ impl App for ImgGui {
                 cols[0].vertical(|ui| {
                     let [i, j] = &data.last().unwrap_or(&[0.0, f64::INFINITY]);
 
-                    ui.heading(format!("Iteration {} error: {j}", *i as usize));
+                    ui.heading(format!("Epoch {} error: {j}", *i as usize));
 
                     Plot::new("Error").show(ui, |ui| ui.line(Line::new(data)));
                 });
@@ -175,11 +175,11 @@ fn main() {
     net.add_layer(5, Activations::Sigmoid);
     net.add_layer(1, Activations::Sigmoid);
 
-    let rate = 1.2;
+    let rate = 1.0;
 
     let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate)
         .with_log(Some(1))
-        .with_batches(Some(75));
+        .with_batches(Some(50));
 
     let mut inputs = IMG1_INPUTS.clone();
     inputs.concat_rows(IMG2_INPUTS.clone()).unwrap();

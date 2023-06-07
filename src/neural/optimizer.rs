@@ -143,6 +143,7 @@ impl Optimizer {
             let acts = net.forward(&inputs.clone_row(i))?;
 
             d_acts[net.layers.len()] = (&acts[acts.len() - 1] - &targets.clone_row(i))?;
+            d_acts[net.layers.len()].apply(|x| x * 2.0);
 
             for (l, layer) in net.layers.iter().enumerate().rev() {
                 w_grads[i][l].zero();
@@ -150,9 +151,8 @@ impl Optimizer {
                 d_acts[l].zero();
 
                 for n in 0..layer.weights.rows() {
-                    let db = 2.0
-                        * d_acts[l + 1][(0, n)]
-                        * layer.activation.derivative(acts[l + 1][(0, n)]);
+                    let db =
+                        d_acts[l + 1][(0, n)] * layer.activation.derivative(acts[l + 1][(0, n)]);
                     b_grads[i][l][(0, n)] += db;
                     for p in 0..layer.weights.cols() {
                         w_grads[i][l][(n, p)] += db * acts[l][(0, p)];
