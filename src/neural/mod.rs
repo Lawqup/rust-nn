@@ -59,23 +59,13 @@ impl DenseLayer {
         self
     }
 
-    /// Propogates a batch of inputs through the layer applying the activation function.
-    pub fn run_batch(&self, input: &Matrix2<f64>) -> Result<Matrix2<f64>> {
+    /// Propogates an input through the layer applying the activation function.
+    pub fn forward(&self, input: &Matrix2<f64>) -> Result<Matrix2<f64>> {
         let mut res = input.dot(&self.weights.transpose())?;
         for row in 0..res.rows() {
             for col in 0..res.cols() {
                 res[(row, col)] += self.biases[(0, col)]
             }
-        }
-        res.apply(|x| self.activation.call(x));
-        Ok(res)
-    }
-
-    /// Propogates an input through the layer applying the activation function.
-    pub fn forward(&self, input: &Matrix2<f64>) -> Result<Matrix2<f64>> {
-        let mut res = input.dot(&self.weights.transpose())?;
-        for col in 0..res.cols() {
-            res[(0, col)] += self.biases[(0, col)]
         }
         res.apply(|x| self.activation.call(x));
         Ok(res)
@@ -126,6 +116,7 @@ impl NeuralNet {
         }
     }
 
+    /// Propogates a batch of inputs through layers, saving the activations after each layer
     pub fn forward(&self, input: &Matrix2<f64>) -> Result<Vec<Matrix2<f64>>> {
         // NN has to be initialized with at least one layer
         let first_layer = self.layers.first().unwrap();
@@ -150,9 +141,9 @@ impl NeuralNet {
             return Err(Error::DimensionErr);
         }
 
-        let mut prev_output = first_layer.run_batch(inputs).unwrap();
+        let mut prev_output = first_layer.forward(inputs).unwrap();
         for layer in self.layers.iter().skip(1) {
-            prev_output = layer.run_batch(&prev_output).unwrap();
+            prev_output = layer.forward(&prev_output).unwrap();
         }
         Ok(prev_output)
     }
@@ -196,9 +187,9 @@ mod tests {
         let layer1 = DenseLayer::new(4, 2, -1.0..=1.0);
         let layer2 = DenseLayer::new(2, 1, -3.0..=5.0);
 
-        let layer1_out = layer1.run_batch(&default_inputs()).unwrap();
+        let layer1_out = layer1.forward(&default_inputs()).unwrap();
 
-        let layer2_out = layer2.run_batch(&layer1_out).unwrap();
+        let layer2_out = layer2.forward(&layer1_out).unwrap();
 
         assert_eq!(layer2_out.dim(), (4, 1));
         assert_eq!(layer2_out.as_vec()[2], layer2_out.as_vec()[3]);
@@ -310,7 +301,7 @@ mod tests {
 
         let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate)
             .with_log(Some(1_000))
-            .with_batches(Some(2));
+            .with_batches(Some(4));
 
         assert_eq!(Ok(()), optim.train(&mut net, &inputs, &targets));
 
