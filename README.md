@@ -5,15 +5,15 @@
 Features include:
 
 - Ergonomic APIs for building and training your networks.
-- Predifined optimizer methods and activation functions, as well as the ability to add your own via implementing a trait.
-- Fully customizable GUI via [egui](https://github.com/emilk/egui) for seeing your networkduring training, including some prebuilt GUIs.
+- Predefined optimizer methods and activation functions, as well as the ability to add your own via implementing a trait.
+- Fully customizable GUI via [egui](https://github.com/emilk/egui) for seeing your network during training, including some prebuilt GUIs.
 
 ## Examples
 
 For more detailed examples, look at the examples directory.
 
 - [Examples directory](./examples/). Featured examples:
-  - [adder_gui](./examples/learn_image) -- simple example of creating a custom training GUI to train a neural network to add numbers
+  - [adder_gui](./examples/learn_image) -- a simple example of creating a custom training GUI to train a neural network to add numbers
   - [learn_image](./examples/learn_image) -- a more involved example for training a neural network to upscale and interpolate images
 
 ### Minimal example
@@ -44,10 +44,10 @@ for (inp, out) in inputs.to_vec().into_iter().zip(res.to_vec()) {
 }
 ```
 
-To make the optimzer display graph the error at each epoch, you can do this:
+To make the optimizer display graph the error at each epoch, you can do this:
 
 ```Rust
 optim.train_gui<NNGui>(&mut net, &inputs, &targets);
 ```
 
-Here, `NNGui` is a predefined struct implementing the `Visualizer` trait that allows the optimzer to spawn and asynchronously update a GUI (meaning performance shouldn't be affected).
+Here, `NNGui` is a predefined struct implementing the `Visualizer` trait that allows the optimizer to spawn and asynchronously update a GUI (meaning performance shouldn't be affected).
