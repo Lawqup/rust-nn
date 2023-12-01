@@ -1,6 +1,6 @@
 # Rust NN: an educational Neural Network framework in Rust
 
-<img src="./assets/learn_images.gif" width="50%" height="50%">
+<img src="./assets/learn_image.gif" width="50%" height="50%">
 
 Features include:
 
@@ -15,6 +15,8 @@ For more detailed examples, look at the examples directory.
 - [Examples directory](./examples/). Featured examples:
   - [adder_gui](./examples/learn_image) -- a simple example of creating a custom training GUI to train a neural network to add numbers
   - [learn_image](./examples/learn_image) -- a more involved example for training a neural network to upscale and interpolate images
+
+**Note**: Running in release makes training *drastically* faster, i.e. do `cargo run --release`.
 
 ### Minimal example
 

@@ -69,10 +69,10 @@ fn input_output_as_img(
     img
 }
 
-fn inputs_to_retained_image(net: &NeuralNet, inputs: &Matrix2<f64>) -> RetainedImage {
+fn inputs_to_retained_image(net: &NeuralNet, inputs: &Matrix2<f64>, img_w: u32) -> RetainedImage {
     let mut buf = Vec::new();
     let outputs = net.run_batch(inputs).unwrap();
-    let img = input_output_as_img(inputs, &outputs, 28);
+    let img = input_output_as_img(inputs, &outputs, img_w);
     JpegEncoder::new(&mut buf).encode_image(&img).unwrap();
     RetainedImage::from_image_bytes("Output Image", &buf).unwrap()
 }
@@ -117,7 +117,13 @@ impl App for ImgGui {
         let net = net.unwrap();
         let data: Vec<_> = data.into_iter().map(|(i, j)| [i as f64, j]).collect();
 
-        let slider_image = inputs_to_retained_image(&net, &generate_inputs(28, self.slider_val));
+        const IMG_PIXELS: u32 = 120;
+
+        let slider_image = inputs_to_retained_image(
+            &net,
+            &generate_inputs(IMG_PIXELS, self.slider_val),
+            IMG_PIXELS,
+        );
 
         CentralPanel::default().show(ctx, |ui| {
             ui.columns(2, |cols| {
@@ -135,7 +141,7 @@ impl App for ImgGui {
                         self.target2.show_scaled(ui, 5.0);
                     });
 
-                    slider_image.show_scaled(ui, 10.0);
+                    slider_image.show_scaled(ui, 10.0 / (IMG_PIXELS / 28) as f32);
 
                     ui.add(Slider::new(&mut self.slider_val, 0.0..=1.0))
                 });
@@ -170,16 +176,16 @@ impl Visualizer for ImgGui {
 }
 
 fn main() {
-    let mut net = NeuralNet::new(3, 10, Activations::Sigmoid);
-    net.add_layer(10, Activations::Sigmoid);
-    net.add_layer(5, Activations::Sigmoid);
+    let mut net = NeuralNet::new(3, 15, Activations::Sigmoid);
+    net.add_layer(15, Activations::ReLU);
+    net.add_layer(10, Activations::ReLU);
     net.add_layer(1, Activations::Sigmoid);
 
     let rate = 1.0;
 
-    let optim = Optimizer::new(OptimizerMethod::Backprop, 10_000, rate)
+    let optim = Optimizer::new(OptimizerMethod::Backprop, 15_000, rate)
         .with_log(Some(1))
-        .with_batches(Some(50));
+        .with_batches(Some(75));
 
     let mut inputs = IMG1_INPUTS.clone();
     inputs.concat_rows(IMG2_INPUTS.clone()).unwrap();
@@ -189,6 +195,10 @@ fn main() {
 
     let _ = optim.train_gui::<ImgGui>(&mut net, &inputs, &targets);
 
+    // build_output(&net);
+}
+
+fn build_output(net: &NeuralNet) {
     const WIDTH: u32 = 500;
     const FRAMES: u32 = 60;
 
