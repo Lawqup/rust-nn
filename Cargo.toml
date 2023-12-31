@@ -6,6 +6,9 @@ liscense = "MIT"
 description = "An educational Neural Network framework in Rust"
 repository = "https://github.com/Lawqup/rust-nn"
 keywords = ["neural-networks", "AI", "ML"]
+exclude = [
+    "assets/*",
+]
 
 
 [workspace]
